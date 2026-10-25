@@ -9,6 +9,12 @@ nest panes in both directions, drag tabs to any edge, and keep every layout acro
 > ships the working patch plus the test/build evidence. See [ROADMAP.md](ROADMAP.md) for the
 > plugin conversion.
 
+## Proposal
+
+Posted in upstream GitHub Discussions (Ideas):
+
+**[Split the right sidebar in both directions (nested panes)](https://github.com/deepseek-ai/deepseek-harness/discussions/10920)**
+
 ## Review
 
 The source diff is recorded as a draft PR in the contributor's fork:
