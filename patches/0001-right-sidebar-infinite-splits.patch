@@ -1,0 +1,1578 @@
+diff --git a/packages/client/ui-dockkit/README.md b/packages/client/ui-dockkit/README.md
+index bc29b54..2b13640 100644
+--- a/packages/client/ui-dockkit/README.md
++++ b/packages/client/ui-dockkit/README.md
+@@ -58,11 +58,11 @@ Everything host-specific arrives through props:
+ 
+ `DockController` satisfies `DockIntents` as written, so an embedding can pass it to `DockLayout` for retained Sidebar layouts or `DockSurface` for recursive split trees. An embedder that routes through its own store implements the same method names instead. Three props carry control policy rather than gestures: `canSplit` (surface-wide, the pane budget; disables the split control with `splitPaneDisabled`), `canAddTab(paneId)` (per pane, omits the add control; leave it out to draw one in every pane), and `canCloseTab(tabId)` (per tab, withholds the chip's close control and the menu's close item and prevents middle-click closing; leave it out to keep every tab closable). Hiding the add control moves nothing else in the strip, and a withheld close moves nothing in the chip — the close control paints over the title's end rather than beside it. A pane's lone chip whose close is withheld draws quiet — no capsule, no hover fill — since there is nothing to select against and nothing to do to it. The kit adds one policy of its own, the room rule below, which disables a pane's split control with `splitPaneNarrow`; `onRoom(fits)` reports its readings so an embedder splitting programmatically can honour the same rule. A visible blocked split control supports click or tap to read its explanation without splitting or focusing the pane.
+ 
+-`dropZones="horizontal"` offers two half-pane hints; once budget or width forbids another split, the whole body accepts a move. A hint is a dashed card inset 8px inside its region, showing the zone's glyph and `labels.dropZone[zone]`; the preview layer covers all tab-body content, while the card under the pointer takes the accent and its neighbour stays a quiet outline. `minPaneFraction` sets the preview minimum, and `planResizeSplit` accepts the same minimum for the committed operation. The Sidebar uses 0.2 and enforces two panes in its own store. The generic engine retains its tree and other split directions. `hideSplitWhenBlocked` hides a blocked split control — pane budget spent or pane too narrow — instead of rendering it disabled; its default is false.
++`dropZones="horizontal"` offers two half-pane hints; once budget or width forbids another split, the whole body accepts a move. A hint is a dashed card inset 8px inside its region, showing the zone's glyph and `labels.dropZone[zone]`; the preview layer covers all tab-body content, while the card under the pointer takes the accent and its neighbour stays a quiet outline. `minPaneFraction` sets the preview minimum, and `planResizeSplit` accepts the same minimum for the committed operation. The Sidebar uses 0.2 and lets its tree nest without a pane cap. The generic engine retains its tree and other split directions. `hideSplitWhenBlocked` hides a blocked split control — pane budget spent or pane too narrow — instead of rendering it disabled; its default is false.
+ 
+ A tab's `kind` is an opaque string. Seeded tabs are factories (`DockControllerOptions`), so what a fresh pane contains is the embedder's decision, not this package's. Content identity is the pair (`kind`, `contentId`): `findContentTab(state, contentId, kind?)` finds the tab showing it anywhere and `findPaneContentTab(state, paneId, contentId, kind?)` within one pane, and `planOpenContent` focuses that tab instead of opening another unless told `revealIfOpened: false`; an explicit `index` seats a new tab at a strip slot rather than at the end.
+ 
+-`DockLayout`, used by the Sidebar, keeps each tab in a stable DOM cell across selection, pane moves and floating. It accepts one docked pane or two horizontal panes; CSS Grid resolves their widths. `keepMounted(tab)` retains visited bodies and `active` controls Session visibility without reparenting content.
++`DockLayout`, used by the Sidebar, keeps each tab in a stable DOM cell across selection, pane moves and floating. It accepts one docked pane or one two-child split, laid out side by side or stacked; CSS Grid resolves their sizes. `keepMounted(tab)` retains visited bodies and `active` controls Session visibility without reparenting content.
+ 
+ `DockSurface` is the docked area for the separate recursive renderer. Chrome around it — a rail, a collapsed presentation, any history controls — belongs to the embedder, which reads `state.expanded` and decides; the kit ships no undo/redo control of its own. Surface-wide controls the embedder does want on the surface go through the `chrome` prop, which the kit places at the far end of the top-right pane's tab strip (the last child of every row split, the first of every column split), so a surface needs no header row of its own. `FloatLayer` owns its own gestures and positions panels in viewport coordinates, so it may be mounted anywhere, including a portal. Both float renderers keep the header at least 20px below the Windows caption (20px below the viewport top in native fullscreen), including newly opened and restored panels. Dragging and resizing start at the displayed position.
+ 
+diff --git a/packages/client/ui-dockkit/src/components/DockSurface.tsx b/packages/client/ui-dockkit/src/components/DockSurface.tsx
+index 846a4b7..eb31804 100644
+--- a/packages/client/ui-dockkit/src/components/DockSurface.tsx
++++ b/packages/client/ui-dockkit/src/components/DockSurface.tsx
+@@ -312,7 +312,7 @@ export function DockSurface(props: DockSurfaceProps): ReactNode {
+ export type DockLayoutProps = DockSurfaceProps & TabRetention
+ 
+ /**
+- * Render one pane or two horizontal panes, and their floats, in one stable content tree.
++ * Render the docked split tree, and its floats, in one stable content tree.
+  * @param props - layout, gestures and lazy body-retention policy.
+  * @returns the layout; the containing ancestors must not establish a fixed-position containing block.
+  *   They may clip `overflow`, which does not reach the fixed-position floats.
+diff --git a/packages/client/ui-dockkit/src/components/TabLayout.tsx b/packages/client/ui-dockkit/src/components/TabLayout.tsx
+index f709744..80ed942 100644
+--- a/packages/client/ui-dockkit/src/components/TabLayout.tsx
++++ b/packages/client/ui-dockkit/src/components/TabLayout.tsx
+@@ -1,10 +1,10 @@
+-/** Stable tab siblings in one horizontal Grid, including viewport-positioned floats. */
++/** Stable tab siblings in one Grid over the whole split tree, including viewport-positioned floats. */
+ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+ import type { MutableRefObject, ReactNode } from 'react'
+ import clsx from 'clsx'
+ import type { DockIntents } from '../contract/adapter.ts'
+-import type { LayoutState, PaneId, PaneNode, TabId, TabRecord } from '../contract/types.ts'
+-import { findTabPane, floatRect, getNode, getPane } from '../engine/tree.ts'
++import type { LayoutState, NodeId, PaneId, PaneNode, SplitAxis, SplitId, TabId, TabRecord } from '../contract/types.ts'
++import { findTabPane, floatRect, getNode } from '../engine/tree.ts'
+ import type { SizePreview } from './PaneTree.tsx'
+ import type { PaneCallbacks } from './render.ts'
+ import { FloatHeader, useFloatGestures } from './FloatLayer.tsx'
+@@ -26,19 +26,153 @@ interface LayoutProps extends TabRetention {
+   readonly intents: DockIntents
+ }
+ 
++/** A rectangle in the docked surface's fraction space. */
++interface Rect {
++  readonly x: number
++  readonly y: number
++  readonly w: number
++  readonly h: number
++}
++
++/** Where one pane sits in the flat Grid: zero-based track starts and spans. */
++interface CellPlacement {
++  readonly column: number
++  readonly columnSpan: number
++  readonly row: number
++  readonly rowSpan: number
++}
++
++/** One pane's Grid placement and the two edge rules it owns. */
++interface PaneSlot {
++  readonly pane: PaneNode
++  readonly placement: CellPlacement
++  readonly edgeLeft: boolean
++  readonly seamTop: boolean
++}
++
++/** One divider between two children of a split. */
++interface DividerSlot {
++  readonly splitId: SplitId
++  readonly index: number
++  readonly axis: SplitAxis
++  /** The split's own rectangle, which bounds the drag's travel. */
++  readonly rect: Rect
++  /** Boundary position along the split's axis, in fraction space. */
++  readonly at: number
++}
++
+ interface TabHostProps extends LayoutProps {
+   readonly tab: TabRecord
+   readonly pane: PaneNode
+-  readonly column: number
++  readonly placement: CellPlacement
++  readonly columnIndex: number
++  readonly edgeLeft: boolean
++  readonly seamTop: boolean
+   readonly floats: ReturnType<typeof useFloatGestures>
+   readonly focusRequest: MutableRefObject<{ readonly tabId: TabId; readonly origin: Element | null } | undefined>
+   /** Chip-box offsets by pane, read and recorded by each selected tab's strip. */
+   readonly offsets: Map<PaneId, number>
+ }
+ 
++/** Tolerance for comparing fraction-space boundaries that mathematical sums should meet. */
++const EPSILON = 1e-9
++
++/** Round a boundary so sibling rectangles that should share an edge compare equal. */
++function boundary(value: number): number {
++  return Math.round(value * 1e6) / 1e6
++}
++
++/** Unique, sorted boundary positions including both outer edges. */
++function boundaries(values: readonly number[]): number[] {
++  const out: number[] = []
++  for (const value of [...values, 0, 1].sort((a, b) => a - b)) {
++    const last = out[out.length - 1]
++    if (last === undefined || value - last > 1e-6) out.push(boundary(value))
++  }
++  return out
++}
++
++/** CSS Grid tracks for the spans between consecutive boundaries. */
++function trackTemplate(values: readonly number[]): string {
++  const tracks: string[] = []
++  for (let index = 1; index < values.length; index += 1) {
++    const previous = values[index - 1]
++    const value = values[index]
++    if (previous === undefined || value === undefined) continue
++    tracks.push(`minmax(0, ${value - previous}fr)`)
++  }
++  return tracks.length === 0 ? 'minmax(0, 1fr)' : tracks.join(' ')
++}
++
++/** Where a boundary sits, or the nearest track when rounding left it off the list. */
++function trackOf(values: readonly number[], value: number): number {
++  const index = values.indexOf(boundary(value))
++  return index < 0 ? 0 : index
++}
++
++/**
++ * Flatten the split tree into one Grid: every leaf pane maps to the tracks its
++ * rectangle covers, so tab hosts stay siblings of the Grid however the tree
++ * nests. Dividers overlay the flat Grid at their split's own rectangle, which
++ * keeps a nested drag's travel bounded to that split.
++ */
++function planDocked(state: LayoutState, preview: SizePreview | undefined): {
++  panes: PaneSlot[]
++  dividers: DividerSlot[]
++  xs: number[]
++  ys: number[]
++} {
++  const panes: { pane: PaneNode; rect: Rect }[] = []
++  const dividers: DividerSlot[] = []
++  const walk = (id: NodeId, rect: Rect): void => {
++    const node = getNode(state, id)
++    if (node.kind === 'pane') {
++      panes.push({ pane: node, rect })
++      return
++    }
++    const sizes = preview?.splitId === node.id ? preview.sizes : node.sizes
++    const row = node.axis === 'row'
++    let offset = row ? rect.x : rect.y
++    const extent = row ? rect.w : rect.h
++    node.children.forEach((child, index) => {
++      const size = sizes[index] ?? 0
++      walk(child, row
++        ? { x: offset, y: rect.y, w: extent * size, h: rect.h }
++        : { x: rect.x, y: offset, w: rect.w, h: extent * size })
++      offset += extent * size
++      if (index < node.children.length - 1) {
++        dividers.push({ splitId: node.id, index, axis: node.axis, rect, at: offset })
++      }
++    })
++  }
++  walk(state.rootId, { x: 0, y: 0, w: 1, h: 1 })
++  const xs = boundaries(panes.flatMap(({ rect }) => [rect.x, rect.x + rect.w]))
++  const ys = boundaries(panes.flatMap(({ rect }) => [rect.y, rect.y + rect.h]))
++  return {
++    panes: panes.map(({ pane, rect }) => {
++      const column = trackOf(xs, rect.x)
++      const row = trackOf(ys, rect.y)
++      return {
++        pane,
++        placement: {
++          column,
++          columnSpan: Math.max(1, trackOf(xs, rect.x + rect.w) - column),
++          row,
++          rowSpan: Math.max(1, trackOf(ys, rect.y + rect.h) - row),
++        },
++        edgeLeft: rect.x <= EPSILON,
++        seamTop: rect.y > EPSILON,
++      }
++    }),
++    dividers,
++    xs,
++    ys,
++  }
++}
++
+ /** A tab's ancestors stay identical across selection, pane moves and floating. */
+-function TabHost({ state, callbacks, intents, tab, pane, column, floats, focusRequest, offsets, keepMounted,
+-  active = true }: TabHostProps): ReactNode {
++function TabHost({ state, callbacks, intents, tab, pane, placement, columnIndex, edgeLeft, seamTop, floats,
++  focusRequest, offsets, keepMounted, active = true }: TabHostProps): ReactNode {
+   const floating = pane.host === 'float'
+   const selected = floating || pane.activeTabId === tab.id
+   const visible = active && selected && (floating || state.expanded)
+@@ -78,9 +212,17 @@ function TabHost({ state, callbacks, intents, tab, pane, column, floats, focusRe
+   const rect = floating ? lifted ?? floatRect(pane) : undefined
+   const depth = lifted === undefined ? state.floats.indexOf(pane.id) + 1 : state.floats.length + 1
+   return (
+-    <div className={clsx(css.tabCell, floating && css.floatingCell)} hidden={!selected}
+-      data-dockkit-host={floating ? 'float' : 'dock'} data-dockkit-column={floating ? undefined : column}
+-      style={{ gridColumn: floating ? 1 : column * 2 + 1, gridRow: 1, order: floating ? depth : 0 }}>
++    <div
++      className={clsx(css.tabCell, floating && css.floatingCell,
++        !floating && edgeLeft && css.tabCellEdgeLeft,
++        !floating && seamTop && css.tabCellSeamTop)}
++      hidden={!selected}
++      data-dockkit-host={floating ? 'float' : 'dock'} data-dockkit-column={floating ? undefined : columnIndex}
++      style={floating ? { gridColumn: 1, gridRow: 1, order: depth } : {
++        gridColumn: `${placement.column + 1} / span ${placement.columnSpan}`,
++        gridRow: `${placement.row + 1} / span ${placement.rowSpan}`,
++        order: 0,
++      }}>
+       <section ref={host} tabIndex={-1} className={clsx(css.tabHost, floating ? css.float : css.pane)}
+         aria-hidden={!visible || undefined}
+         data-dockkit-content={tab.id}
+@@ -88,7 +230,7 @@ function TabHost({ state, callbacks, intents, tab, pane, column, floats, focusRe
+         data-dockkit-pane-active={!floating && state.activePaneId === pane.id || undefined}
+         data-dockkit-float={floating ? pane.id : undefined}
+         data-dockkit-float-active={floating && state.activePaneId === pane.id || undefined}
+-        data-dockkit-column={!floating ? column : undefined}
++        data-dockkit-column={!floating ? columnIndex : undefined}
+         style={rect === undefined ? undefined : {
+           left: rect.x, top: `max(var(--dsh-dockkit-float-top, 0px), ${rect.y}px)`, width: rect.width, height: rect.height,
+         }}
+@@ -112,10 +254,10 @@ function TabHost({ state, callbacks, intents, tab, pane, column, floats, focusRe
+ }
+ 
+ /**
+- * One or two horizontal panes; CSS resolves content sizes from track fractions.
++ * All docked panes in one flat Grid over the split tree, plus one overlay per
++ * divider; CSS resolves content sizes from track fractions.
+  * @param props - committed layout, gesture preview and body retention policy.
+  * @returns stable tab containers, including floating tabs.
+- * @throws if the docked tree is not one pane or two horizontal panes.
+  */
+ export function TabLayout(props: LayoutProps): ReactNode {
+   const { state, callbacks, preview } = props
+@@ -132,30 +274,54 @@ export function TabLayout(props: LayoutProps): ReactNode {
+     },
+   }
+   const root = getNode(state, state.rootId)
+-  if (root.kind === 'split' && (root.axis !== 'row' || root.children.length !== 2)) {
+-    throw new Error('DockLayout requires one pane or two horizontally split panes')
+-  }
+-  const panes = root.kind === 'pane' ? [root] : root.children.map(id => getPane(state, id))
+-  const sizes = root.kind === 'split' ? preview?.splitId === root.id ? preview.sizes : root.sizes : [1]
++  const { panes, dividers, xs, ys } = planDocked(state, preview)
++  const slots = new Map(panes.map((slot, index) => [slot.pane.id, { slot, index }]))
+   const floats = useFloatGestures(state, props.intents)
+-  const columns = sizes.map(size => `minmax(0, ${size}fr)`).join(' 0px ')
+   return (
+     <div className={css.tabLayout} data-dockkit-split={root.kind === 'split' ? root.id : undefined}
+-      style={{ gridTemplateColumns: columns }}>
++      data-dockkit-axis={root.kind === 'split' ? root.axis : 'row'}
++      style={{ gridTemplateColumns: trackTemplate(xs), gridTemplateRows: trackTemplate(ys) }}>
+       {/* Logical order changes must not make React move a connected webview's ancestor. */}
+       {Object.values(state.tabs).sort((a, b) => a.id.localeCompare(b.id)).map((tab) => {
+         const pane = findTabPane(state, tab.id)
++        const held = slots.get(pane.id)
+         return <TabHost key={tab.id} {...props} callbacks={tabCallbacks} tab={tab} pane={pane}
+-          column={panes.findIndex(candidate => candidate.id === pane.id)} floats={floats} focusRequest={focusRequest} offsets={offsets} />
++          placement={held?.slot.placement ?? { column: 0, columnSpan: 1, row: 0, rowSpan: 1 }}
++          columnIndex={held?.index ?? 0}
++          edgeLeft={held?.slot.edgeLeft ?? false} seamTop={held?.slot.seamTop ?? false}
++          floats={floats} focusRequest={focusRequest} offsets={offsets} />
+       })}
+-      {panes.filter(pane => pane.tabs.length === 0).map(pane => (
+-        <div key={pane.id} className={css.emptyTabHost} data-dockkit-empty style={{ gridColumn: panes.indexOf(pane) * 2 + 1, gridRow: 1 }}>
++      {panes.filter(({ pane }) => pane.tabs.length === 0).map(({ pane, placement, edgeLeft, seamTop }, index) => (
++        <div key={pane.id}
++          className={clsx(css.emptyTabHost, edgeLeft && css.tabCellEdgeLeft, seamTop && css.tabCellSeamTop)}
++          data-dockkit-empty data-dockkit-column={index}
++          style={{
++            gridColumn: `${placement.column + 1} / span ${placement.columnSpan}`,
++            gridRow: `${placement.row + 1} / span ${placement.rowSpan}`,
++          }}>
+           <TabPanel state={state} pane={pane} callbacks={callbacks} />
+         </div>
+       ))}
+-      {root.kind === 'split' && <div className={clsx(css.divider, css.tabLayoutDivider)}
+-        data-dockkit-divider={`${root.id}:0`} style={{ gridColumn: 2, gridRow: 1 }}
+-        onPointerDown={(event) => { callbacks.onDividerPressed(root.id, 0, event) }} />}
++      {dividers.map(divider => (
++        <div key={`${divider.splitId}:${divider.index}`} className={css.tabDividerRegion}
++          style={{
++            left: `${divider.rect.x * 100}%`,
++            top: `${divider.rect.y * 100}%`,
++            width: `${divider.rect.w * 100}%`,
++            height: `${divider.rect.h * 100}%`,
++          }}>
++          <div
++            className={clsx(css.divider, css.tabLayoutDivider,
++              divider.axis === 'column' && css.tabLayoutDividerColumn)}
++            data-dockkit-divider={`${divider.splitId}:${divider.index}`}
++            style={divider.axis === 'row'
++              ? { position: 'absolute', top: 0, bottom: 0, width: 0,
++                left: `${((divider.at - divider.rect.x) / divider.rect.w) * 100}%` }
++              : { position: 'absolute', left: 0, right: 0, height: 0,
++                top: `${((divider.at - divider.rect.y) / divider.rect.h) * 100}%` }}
++            onPointerDown={(event) => { callbacks.onDividerPressed(divider.splitId, divider.index, event) }} />
++        </div>
++      ))}
+     </div>
+   )
+ }
+diff --git a/packages/client/ui-dockkit/src/components/dockkit.module.css b/packages/client/ui-dockkit/src/components/dockkit.module.css
+index 9aec2d8..5e5b3fa 100644
+--- a/packages/client/ui-dockkit/src/components/dockkit.module.css
++++ b/packages/client/ui-dockkit/src/components/dockkit.module.css
+@@ -134,6 +134,7 @@
+ /* Every tab remains a sibling. Explicit tracks determine placement; order only
+    changes painting, so raising a float never moves a connected DOM ancestor. */
+ .tabLayout {
++  position: relative;
+   display: grid;
+   flex: 1 1 auto;
+   grid-template-rows: minmax(0, 1fr);
+@@ -172,10 +173,18 @@
+   background: var(--dsw-alias-bg-base);
+ }
+ 
+-.tabCell[data-dockkit-host='dock'][data-dockkit-column='0'] > .tabHost {
++/* A pane on the panel's left edge draws it; in a stacked or nested tree several
++   panes share that edge. */
++.tabCellEdgeLeft {
+   border-left: 0.5px solid var(--dsw-alias-border-l4);
+ }
+ 
++/* Every pane below another pane owns the seam: a 0.5px pseudo-element
++   antialiases away on dark grounds, so a real 1px border carries it. */
++.tabCellSeamTop {
++  border-top: 1px solid color-mix(in srgb, var(--dsw-alias-label-caption) 55%, transparent);
++}
++
+ .tabHostHeader {
+   flex: none;
+ }
+@@ -185,6 +194,14 @@
+   min-width: 0;
+ }
+ 
++/* One overlay per split, sized to the split's own rectangle so a nested drag's
++   travel is bounded there; only the line itself takes pointer events. */
++.tabDividerRegion {
++  position: absolute;
++  z-index: calc(var(--dsh-dockkit-dock-layer, 10) + 1);
++  pointer-events: none;
++}
++
+ .tabLayoutDivider {
+   width: 0;
+   cursor: col-resize;
+@@ -207,6 +224,42 @@
+   background: linear-gradient(to bottom, transparent, var(--dsw-alias-label-caption) 50%, transparent) center / 1px 100% no-repeat;
+ }
+ 
++/* A stacked pair's seam is a real border on the lower cell: a 0.5px
++   pseudo-element antialiases away on dark grounds, and the tab strip draws no
++   border of its own. The divider keeps its drag surface, without a second
++   hairline under the border. */
++.tabLayout[data-dockkit-axis='column'] .tabCell[data-dockkit-host='dock'][data-dockkit-column='1'],
++.tabLayout[data-dockkit-axis='column'] .emptyTabHost[data-dockkit-column='1'] {
++  border-top: 1px solid color-mix(in srgb, var(--dsw-alias-label-caption) 55%, transparent);
++}
++
++/* A stacked pair: the same seam turned horizontal. */
++.tabLayoutDividerColumn {
++  width: auto;
++  height: 0;
++  cursor: row-resize;
++}
++
++.tabLayoutDividerColumn::before {
++  top: -0.25px;
++  bottom: auto;
++  left: 0;
++  right: 0;
++  width: auto;
++  height: 0.5px;
++  background: transparent;
++}
++
++.tabLayoutDividerColumn::after {
++  top: -4px;
++  bottom: -4px;
++  left: 0;
++  right: 0;
++  /* The lower pane's 1px border is the visible seam; this layer only widens
++     the pointer target, so it must not paint a second line under it. */
++  background: none;
++}
++
+ /* A body that overflows scrolls inside its pane; nothing escapes the pane. */
+ .pane {
+   display: flex;
+diff --git a/packages/client/ui-dockkit/src/engine/constraints.ts b/packages/client/ui-dockkit/src/engine/constraints.ts
+index 10ebb9f..0d4e49f 100644
+--- a/packages/client/ui-dockkit/src/engine/constraints.ts
++++ b/packages/client/ui-dockkit/src/engine/constraints.ts
+@@ -6,8 +6,8 @@
+ import type { DockZone, LayoutState, SplitAxis, SplitDirection } from '../contract/types.ts'
+ import { assertNever, dockPaneIds } from './tree.ts'
+ 
+-/** V1 caps the docked grid at four panes; floating panes do not count. */
+-export const MAX_DOCK_PANES = 4
++/** The engine keeps no docked-pane ceiling; an embedder may still enforce one through `canSplit`. */
++export const MAX_DOCK_PANES = Number.POSITIVE_INFINITY
+ 
+ /** Smallest fraction a divider drag may leave a pane, as a share of its split. */
+ export const MIN_PANE_FRACTION = 0.12
+diff --git a/packages/client/ui-dockkit/src/engine/controller.ts b/packages/client/ui-dockkit/src/engine/controller.ts
+index 9c599f7..17a5642 100644
+--- a/packages/client/ui-dockkit/src/engine/controller.ts
++++ b/packages/client/ui-dockkit/src/engine/controller.ts
+@@ -13,7 +13,7 @@
+  * factory, and a tab's `kind` is an opaque string.
+  */
+ import type {
+-  DockMode, DockZone, FloatRect, LayoutOp, LayoutState, PaneId, SplitId, TabId,
++  DockMode, DockZone, FloatRect, LayoutOp, LayoutState, PaneId, SplitAxis, SplitId, TabId,
+ } from '../contract/types.ts'
+ import { canSplit } from './constraints.ts'
+ import { createIdMinter, createInitialState, type IdMinter, type TabFactory } from './initial.ts'
+@@ -141,12 +141,13 @@ export class DockController {
+   }
+ 
+   /**
+-   * Split a pane to its right and seat the embedder's pane tab in the new pane.
++   * Split a pane and seat the embedder's pane tab in the new pane.
+    * @param paneId - pane to split; defaults to the active docked pane.
+-   * @returns false when the docked grid is already at `MAX_DOCK_PANES`.
++   * @param axis - `'row'` puts the new pane to the right, `'column'` below.
++   * @returns false when the split changes nothing.
+    */
+-  splitPane(paneId?: PaneId): boolean {
+-    return this.run(planSplitPane(this.state, this.mint, paneId, this.makePaneTab))
++  splitPane(paneId?: PaneId, axis: SplitAxis = 'row'): boolean {
++    return this.run(planSplitPane(this.state, this.mint, paneId, this.makePaneTab, axis))
+   }
+ 
+   /**
+diff --git a/packages/client/ui-dockkit/src/engine/planner.ts b/packages/client/ui-dockkit/src/engine/planner.ts
+index 1657537..8b29b87 100644
+--- a/packages/client/ui-dockkit/src/engine/planner.ts
++++ b/packages/client/ui-dockkit/src/engine/planner.ts
+@@ -13,7 +13,7 @@
+  * records nothing and notifies nobody.
+  */
+ import type {
+-  DockMode, DockZone, FloatRect, LayoutOp, LayoutState, PaneId, PaneNode, SplitId, TabId, TabRecord,
++  DockMode, DockZone, FloatRect, LayoutOp, LayoutState, PaneId, PaneNode, SplitAxis, SplitId, TabId, TabRecord,
+ } from '../contract/types.ts'
+ import { canSplit, clampSizes, FLOAT_DEFAULT_SIZE, zoneSplit } from './constraints.ts'
+ import type { TabFactory } from './initial.ts'
+@@ -129,11 +129,12 @@ export function planSetMode(state: LayoutState, mode: DockMode): readonly Layout
+ }
+ 
+ /**
+- * Split a pane to its right and seed the new pane.
++ * Split a pane and seed the new pane.
+  * @param state - current layout.
+  * @param mint - id source for the pane, split, and seeded tab.
+  * @param paneId - pane to split; defaults to the active docked pane.
+  * @param makePaneTab - builds the seeded tab; omit to leave the new pane empty.
++ * @param axis - direction the children lay out in; `'row'` puts the new pane to the right, `'column'` below.
+  * @returns the operations, or none when the pane budget is spent.
+  */
+ export function planSplitPane(
+@@ -141,6 +142,7 @@ export function planSplitPane(
+   mint: Mint,
+   paneId?: PaneId,
+   makePaneTab?: TabFactory,
++  axis: SplitAxis = 'row',
+ ): readonly LayoutOp[] {
+   if (!canSplit(state)) return NOTHING
+   const target = paneId ?? activeDockPaneId(state)
+@@ -149,7 +151,7 @@ export function planSplitPane(
+   const ops: LayoutOp[] = [{
+     type: 'split',
+     paneId: target,
+-    axis: 'row',
++    axis,
+     direction: 'after',
+     newPaneId,
+     newSplitId: mint('split'),
+diff --git a/packages/client/ui-dockkit/tests/constraints.client.spec.ts b/packages/client/ui-dockkit/tests/constraints.client.spec.ts
+index 0b116ee..7c244ce 100644
+--- a/packages/client/ui-dockkit/tests/constraints.client.spec.ts
++++ b/packages/client/ui-dockkit/tests/constraints.client.spec.ts
+@@ -30,11 +30,11 @@ function grid(count: number): LayoutState {
+ }
+ 
+ describe('pane cap', () => {
+-  it('allows splitting up to four docked panes and no further', () => {
+-    expect(MAX_DOCK_PANES).toBe(4)
++  it('keeps the docked tree unbounded', () => {
++    expect(MAX_DOCK_PANES).toBe(Number.POSITIVE_INFINITY)
+     expect(canSplit(createInitialState(createIdMinter(), seedTab))).toBe(true)
+-    expect(dockPaneCount(grid(4))).toBe(4)
+-    expect(canSplit(grid(4))).toBe(false)
++    expect(dockPaneCount(grid(8))).toBe(8)
++    expect(canSplit(grid(8))).toBe(true)
+     expect(canSplit(grid(3))).toBe(true)
+   })
+ 
+diff --git a/packages/client/ui-dockkit/tests/controller.client.spec.ts b/packages/client/ui-dockkit/tests/controller.client.spec.ts
+index 5c29676..60cc0b9 100644
+--- a/packages/client/ui-dockkit/tests/controller.client.spec.ts
++++ b/packages/client/ui-dockkit/tests/controller.client.spec.ts
+@@ -89,16 +89,13 @@ describe('splitting', () => {
+     expect(controller.activeDockPaneId()).toBe(paneId)
+   })
+ 
+-  it('stops at four panes without recording anything', () => {
++  it('keeps splitting beyond four panes', () => {
+     const { controller } = expanded()
++    for (let index = 0; index < 6; index += 1) expect(controller.splitPane()).toBe(true)
++    expect(dockPaneCount(controller.getSnapshot().state)).toBe(7)
++    expect(controller.getSnapshot().canSplit).toBe(true)
+     expect(controller.splitPane()).toBe(true)
+-    expect(controller.splitPane()).toBe(true)
+-    expect(controller.splitPane()).toBe(true)
+-    expect(dockPaneCount(controller.getSnapshot().state)).toBe(4)
+-    const before = controller.ops.length
+-    expect(controller.splitPane()).toBe(false)
+-    expect(controller.ops).toHaveLength(before)
+-    expect(controller.getSnapshot().canSplit).toBe(false)
++    expect(dockPaneCount(controller.getSnapshot().state)).toBe(8)
+   })
+ })
+ 
+@@ -170,15 +167,14 @@ describe('drops', () => {
+     expect(dockPaneCount(state)).toBe(2)
+   })
+ 
+-  it('refuses an edge drop once the grid is full', () => {
++  it('accepts an edge drop beyond four panes', () => {
+     const { controller, paneId } = expanded()
+     const tabId = controller.openContent({ contentId: 'dsh-resource://file/session/s/a.txt', title: 'a.txt', kind: 'text-preview' })
+     controller.splitPane()
+     controller.splitPane()
+     controller.splitPane()
+-    const before = controller.ops.length
+-    expect(controller.dropTab(tabId, paneId, 'right')).toBe(false)
+-    expect(controller.ops).toHaveLength(before)
++    expect(controller.dropTab(tabId, paneId, 'right')).toBe(true)
++    expect(dockPaneCount(controller.getSnapshot().state)).toBe(5)
+   })
+ 
+   it('reorders inside one pane', () => {
+diff --git a/packages/client/ui-dockkit/tests/planner.client.spec.ts b/packages/client/ui-dockkit/tests/planner.client.spec.ts
+index fa48396..4c2fc74 100644
+--- a/packages/client/ui-dockkit/tests/planner.client.spec.ts
++++ b/packages/client/ui-dockkit/tests/planner.client.spec.ts
+@@ -45,8 +45,20 @@ describe('planner determinism', () => {
+     expect(planOne.length).toBeGreaterThan(0)
+   })
+ 
+-  it('leaves the state it was handed untouched', () => {
++  it('plans a column split below the pane when asked for one', () => {
+     const { state, minter } = seededState()
++    const ops = planSplitPane(state, minter.next, undefined, seedTab, 'column')
++    const split = ops.find(op => op.type === 'split')
++    expect(split).toMatchObject({ axis: 'column', direction: 'after' })
++    const next = applyAll(state, ops)
++    expect(getSplit(next, next.rootId).axis).toBe('column')
++    // The new pane is below: the first child is the original pane.
++    const root = getSplit(next, next.rootId)
++    expect(dockPaneIds(next)[0]).toBe(getPane(state, state.rootId).id)
++    expect(root.children).toHaveLength(2)
++  })
++
++  it('leaves the state it was handed untouched', () => {    const { state, minter } = seededState()
+     const before = frozen(state)
+     const mint = minter.next
+ 
+@@ -72,21 +84,21 @@ describe('planner determinism', () => {
+     expect(planDropTab(state, mint, tabId, getPane(state, state.rootId).id, 'center')).toEqual([])
+   })
+ 
+-  it('refuses to plan past the pane budget', () => {
++  it('keeps planning splits without a pane budget', () => {
+     const seeded = seededState()
+     let { state } = seeded
+     const { minter } = seeded
+     const mint = minter.next
+-    for (let index = 0; index < 3; index += 1) {
++    for (let index = 0; index < 5; index += 1) {
+       state = applyAll(state, planSplitPane(state, mint, state.activePaneId, seedTab))
+     }
+-    expect(planSplitPane(state, mint, state.activePaneId, seedTab)).toEqual([])
++    expect(planSplitPane(state, mint, state.activePaneId, seedTab)).not.toEqual([])
+     // The root is a split once panes exist, so address a real pane.
+     const firstPane = dockPaneIds(state)[0]
+     if (firstPane === undefined) throw new Error('fixture: no docked pane')
+     const tabId = getPane(state, firstPane).tabs[0]
+     if (tabId === undefined) throw new Error('fixture: seeded tab missing')
+-    expect(planDropTab(state, mint, tabId, firstPane, 'right')).toEqual([])
++    expect(planDropTab(state, mint, tabId, firstPane, 'right', seedTab)).not.toEqual([])
+   })
+ })
+ 
+diff --git a/packages/client/ui-dockkit/tests/tab-layout.client.spec.tsx b/packages/client/ui-dockkit/tests/tab-layout.client.spec.tsx
+index 7924776..090343f 100644
+--- a/packages/client/ui-dockkit/tests/tab-layout.client.spec.tsx
++++ b/packages/client/ui-dockkit/tests/tab-layout.client.spec.tsx
+@@ -3,8 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest'
+ import { act, cleanup, fireEvent, render } from '@testing-library/react'
+ import type { ComponentProps } from 'react'
+ import { TabLayout } from '../src/components/TabLayout.tsx'
+-import { DockController } from '../src/engine/controller.ts'
+-import { getNode, getPane } from '../src/engine/tree.ts'
++import { getNode, getPane, topRightPaneId } from '../src/engine/tree.ts'
+ import type { PaneCallbacks } from '../src/components/render.ts'
+ import type { TabId } from '../src/contract/types.ts'
+ import { followPointer } from '../src/components/pointer.ts'
+@@ -21,7 +20,7 @@ function mounted(controller = seededController(), options: Partial<ComponentProp
+     dropTarget: undefined, draggingTabId: undefined, labels: TEST_LABELS,
+     renderTab: tab => <input data-body={tab.id} defaultValue={tab.title} />,
+     renderTabTitle: undefined, renderTabMenuItems: undefined,
+-    chromePaneId: getPane(controller.getSnapshot().state, controller.getSnapshot().state.rootId).id,
++    chromePaneId: topRightPaneId(controller.getSnapshot().state),
+     chrome: undefined,
+   }
+   const props = () => ({ state: controller.getSnapshot().state, callbacks, intents: controller, preview: undefined, ...options })
+@@ -235,29 +234,39 @@ it('does not require a docked strip when a selected tab becomes floating in the
+   expect(h.node(`[data-dockkit-content="${second}"]`).hasAttribute('data-dockkit-float')).toBe(true)
+ })
+ 
+-it('renders an empty pane and rejects unsupported docked trees', () => {
+-  const controller = new DockController()
++it('renders a stacked pair', () => {
++  const controller = seededController()
+   controller.setExpanded(true)
++  expect(controller.splitPane(undefined, 'column')).toBe(true)
+   const h = mounted(controller)
+-  expect(h.node('[data-dockkit-empty]')).toBeDefined()
+-  controller.openContent({ kind: 'file', contentId: 'file:a', title: 'A' })
+-  controller.splitPane()
+-  const state = controller.getSnapshot().state
+-  const root = getNode(state, state.rootId)
++  const layout = h.view.container.firstElementChild as HTMLElement
++  expect(layout.dataset.dockkitAxis).toBe('column')
++  expect([...h.view.container.querySelectorAll<HTMLElement>('[data-dockkit-host="dock"]')].map(cell => cell.style.gridRow))
++    .toEqual(['1 / span 1', '2 / span 1'])
++  const divider = h.node('[data-dockkit-divider]')
++  expect(divider.style.top).toBe('50%')
++  expect(divider.style.height).toBe('0px')
++  expect(divider.style.left).toBe('0px')
++})
++
++it('renders a nested tree of three panes', () => {
++  const controller = seededController()
++  controller.setExpanded(true)
++  expect(controller.splitPane()).toBe(true)
++  const first = controller.getSnapshot().state
++  const root = getNode(first, first.rootId)
+   if (root.kind !== 'split') throw new Error('expected a split')
+-  vi.spyOn(console, 'error').mockImplementation(() => {})
+-  const suppress = (event: ErrorEvent): void => {
+-    if (event.error instanceof Error && event.error.message === 'DockLayout requires one pane or two horizontally split panes') {
+-      event.preventDefault()
+-    }
+-  }
+-  window.addEventListener('error', suppress)
+-  try {
+-    expect(() =>{  h.redraw({ state: { ...state, nodes: { ...state.nodes, [root.id]: { ...root, axis: 'column' } } } }) })
+-      .toThrow('two horizontally split panes')
+-  } finally {
+-    window.removeEventListener('error', suppress)
+-  }
++  const second = root.children[1]
++  if (second === undefined) throw new Error('expected a second pane')
++  expect(controller.splitPane(getPane(first, second).id, 'column')).toBe(true)
++  const state = controller.getSnapshot().state
++  const h = mounted(controller)
++  h.redraw({ state })
++  expect(h.view.container.querySelectorAll('[data-dockkit-host="dock"]')).toHaveLength(3)
++  expect(h.view.container.querySelectorAll('[data-dockkit-divider]')).toHaveLength(2)
++  const cells = [...h.view.container.querySelectorAll<HTMLElement>('[data-dockkit-host="dock"]')]
++  expect(cells.map(cell => cell.style.gridColumn)).toEqual(['1 / span 1', '2 / span 1', '2 / span 1'])
++  expect(cells.map(cell => cell.style.gridRow)).toEqual(['1 / span 2', '1 / span 1', '2 / span 1'])
+ })
+ 
+ it('keeps a superseding gesture marker when an older follower detaches', () => {
+diff --git a/packages/client/ui-sidebar-right/README.md b/packages/client/ui-sidebar-right/README.md
+index 01fbf0a..62028d9 100644
+--- a/packages/client/ui-sidebar-right/README.md
++++ b/packages/client/ui-sidebar-right/README.md
+@@ -52,7 +52,7 @@ The panel has no header row. Its two controls — the presentation switch and th
+ <a id="the-expand-button"></a>
+ ## The expand button
+ 
+-The shortcut reference includes right-sidebar toggle, split and panel fullscreen commands. The same effective binding appears on the corresponding controls. Split and fullscreen require focus within a visible dock pane; conversation focus leaves them unavailable. Split remains visible when unavailable; its focusable tooltip shows the current binding and explains the pane limit or width requirement. Files, browser, and terminal providers contribute their own commands. Guide buttons display effective shortcuts as unboxed text inline without duplicate tooltips.
++The shortcut reference includes right-sidebar toggle, split right, split down and panel fullscreen commands. The same effective binding appears on the corresponding controls. Split and fullscreen require focus within a visible dock pane; conversation focus leaves them unavailable. Split remains visible when unavailable; its focusable tooltip shows the current binding and explains the room requirement. Files, browser, and terminal providers contribute their own commands. Guide buttons display effective shortcuts as unboxed text inline without duplicate tooltips.
+ 
+ While the panel is hidden, one button in the conversation header's corner seat (`conversation.session.header.corner`, past the utilities' right edge and level with the Session log control) is the way back in. Its glyph is the left sidebar's collapse icon mirrored. It uses the shared compact Button, matching the adjacent More action’s radius and hover fill. It shares the panel's store (the slot runtime allows one handle across two same-scope seats); while the panel is shown it renders nothing, and the corner seat collapses with it. A collapsed Sidebar therefore costs the conversation nothing: no rail, no width, and the transcript's scrollbar stays at the column's edge. Without a session there is no button and no panel.
+ 
+@@ -71,7 +71,7 @@ After every action the kit's settle planner keeps the expanded surface populated
+ 
+ The docked surface's last tab carries one more rule, decided in the store's `closeTab` and mirrored to the kit through `canCloseTab`: the guide standing as the only docked tab draws no close control or menu close item and ignores middle clicks — its chip sits quiet, and with no extension item contributed a secondary press opens no menu — and a programmatic close of it records nothing; any other tab standing alone closes together with the column in one entry — the layout stays empty until the next expansion seeds its current default page. Floating panels take no part in the rule: the foreground Session's floats render whether or not the column is expanded, and their tabs close freely.
+ 
+-The store saves each Session's layout, tab identities, selection, split ratios, floating rectangles, presentation and identity counter as JSON under `dsh.sidebar-right.v1.<sessionId>` in localStorage. Reload restores that layout before tab bodies render; switching Sessions keeps their layouts independent. Providers restore their own content from the retained tab identity and resource address, including [terminal reconnection](../ui-sidebar-terminal/README.md#use-this-package). Navigation parameters, resource contents and live connections are not layout state. Undo history stays in memory and resets on reload. Saved field types, node membership, selection, identity counters and the one-pane or two-horizontal-pane dock layout are validated before adoption or startup discovery; invalid data clears only its Session key. Storage failures leave the current layout usable in memory. Windows at the same origin share the last saved layout per Session; each active window keeps its own current layout until reload.
++The store saves each Session's layout, tab identities, selection, split ratios, floating rectangles, presentation and identity counter as JSON under `dsh.sidebar-right.v1.<sessionId>` in localStorage. Reload restores that layout before tab bodies render; switching Sessions keeps their layouts independent. Providers restore their own content from the retained tab identity and resource address, including [terminal reconnection](../ui-sidebar-terminal/README.md#use-this-package). Navigation parameters, resource contents and live connections are not layout state. Undo history stays in memory and resets on reload. Saved field types, node membership, selection, identity counters and the dock layout are validated before adoption or startup discovery; invalid data clears only its Session key. Storage failures leave the current layout usable in memory. Windows at the same origin share the last saved layout per Session; each active window keeps its own current layout until reload.
+ 
+ `sidebarRight.openTabs` publishes stable metadata for every open tab across saved and adopted Sessions. Startup discovery reads the layout keys without mounting dormant content, pinning files or activating Agents. Adopted stores replace their own metadata on membership commits, and permanently cleared scopes remove it. Other windows' storage writes do not overwrite this window's live membership. Providers use this inventory to restore their own resource lifetimes.
+ 
+@@ -92,9 +92,9 @@ Two more seats extend what is already there: `sidebar.right.tab.guide` (chain) r
+ 
+ `openResource(address, options?)` and `openTab(kind, options?)` are the navigation controller, and every way into the column calls one of them: the conversation's file links and a tool row's line reference (`openResource(fileAddress, { params: { line } })`), the strip's add control and a guide entry box (`openTab`), a file tree's rows (`tab.actions.openResource`). A resource address is a `dsh-resource://<type>/…` URI; without `options.kind` the registry claims it (globs and `canOpen`, best band wins), with it that kind's type in force opens it. A page is named by kind; the tab is recorded under an address this package composes and nobody else spells (`contract/seed.ts`). Both run the same steps as one history entry: a resource tab already showing the same (kind, contentId) is focused wherever it sits unless `revealIfOpened: false`; ordinary page tabs always deduplicate within the target pane, regardless of that option; otherwise a new tab lands in `options.replaceTab`'s pane and slot (closing that tab), else `options.paneId`, else the active docked pane; the panel expands, because content the user cannot see is not opened. Then the Tab domain records the navigation — `params` reach the body as `navigation.params`, with `revision` stepped — outside the layout history. `params` is typed by what is opened: a viewer for a resource type merges its entry into `SidebarRightResourceParamsMap` (the text preview declares `{ line?: number }`); a page type that takes parameters merges into `SidebarRightTabParamsMap` under its kind; values are JSON-shaped by convention, unchecked at run time. An address outside `dsh-resource://`, one no type claims, or a kind nothing registered throws: that is a wiring mistake, not a user error.
+ 
+-`preferNewPane: true` first asks the target docked pane to split under the normal two-pane and room rules, then falls back to that pane when no split is available. `replaceTab` takes precedence and disables this preference.
++`preferNewPane: true` first asks the target docked pane to split under the normal split and room rules, then falls back to that pane when no split is available. `replaceTab` takes precedence and disables this preference.
+ 
+-`close(tabId)` closes a tab; `active()` reads the active tab. `isExpanded()` and `toggleExpanded()` read and drive the column's expansion; `toggleFullscreen(target)` applies the panel control’s display-mode action to a captured dock pane. Layout operations, for callers that arrange the column programmatically, each recorded like the gesture it stands in for: `focus(tabId)` focuses a tab and its pane; `split(paneId?)` splits a docked pane (the active one by default) under the same pane budget and room rule as the strip's control and returns the new pane's id, or `undefined` — recording nothing — when it cannot; `float(tabId, rect?)` takes a docked tab out into a panel; `dock(paneId)` returns a floating panel to the active docked pane. A tab or pane that does not exist, or already is where the call would put it, is left alone. The face exposes operations only: no layout snapshot, no operation log, no lookup by address. `_undo()` / `_redo()` step the on-screen surface's history; they are `@internal` — the sequence has no user-facing control, and these exist for tests. Commands act on the on-screen Session through its adopted store; with no Session on screen, or before the runtime mints its store, they throw rather than write into a surface nobody draws. `mounted` is the observable of the Session on screen: the selected Session while the Conversation fills the main column, `undefined` while a global panel replaces it or no Session is selected. The plugin derives it from the Session selection and `ctx.layout.panelInfo`, and it changes before React renders the change that causes it, so a component rendered in that commit reads the arriving Session and may act on it from its effects: the frame renders that Session's seat in the same pass, which mints its store. Seats never publish it; each reports only what it renders with: the room its docking kit measured, which `split` and `preferNewPane` apply to that Session's panes (unmeasured panes have room), and whether its frame width presents the panel fullscreen automatically, which the fullscreen command applies. The plan review's automatic open reads `mounted` through a bound hook.
++`close(tabId)` closes a tab; `active()` reads the active tab. `isExpanded()` and `toggleExpanded()` read and drive the column's expansion; `toggleFullscreen(target)` applies the panel control’s display-mode action to a captured dock pane. Layout operations, for callers that arrange the column programmatically, each recorded like the gesture it stands in for: `focus(tabId)` focuses a tab and its pane; `split(paneId?, axis?)` splits a docked pane (the active one by default; `'row'` to the right, `'column'` below) under the same room rule as the strip's control and returns the new pane's id, or `undefined` — recording nothing — when it cannot; `float(tabId, rect?)` takes a docked tab out into a panel; `dock(paneId)` returns a floating panel to the active docked pane. A tab or pane that does not exist, or already is where the call would put it, is left alone. The face exposes operations only: no layout snapshot, no operation log, no lookup by address. `_undo()` / `_redo()` step the on-screen surface's history; they are `@internal` — the sequence has no user-facing control, and these exist for tests. Commands act on the on-screen Session through its adopted store; with no Session on screen, or before the runtime mints its store, they throw rather than write into a surface nobody draws. `mounted` is the observable of the Session on screen: the selected Session while the Conversation fills the main column, `undefined` while a global panel replaces it or no Session is selected. The plugin derives it from the Session selection and `ctx.layout.panelInfo`, and it changes before React renders the change that causes it, so a component rendered in that commit reads the arriving Session and may act on it from its effects: the frame renders that Session's seat in the same pass, which mints its store. Seats never publish it; each reports only what it renders with: the room its docking kit measured, which `split` and `preferNewPane` apply to that Session's panes (unmeasured panes have room), and whether its frame width presents the panel fullscreen automatically, which the fullscreen command applies. The plan review's automatic open reads `mounted` through a bound hook.
+ 
+ `focusedTarget(element?)` resolves the current DOM pane and tab, including an embedding iframe; outside focus returns no page. `commandTarget(element?)` additionally allows an outside open to use the on-screen Session's active dock pane. Captures include the occurrence and navigation revision; `isTargetCurrent(target)` rejects changed Sessions, moved or reopened tabs, and intervening navigation. Focus and pointer activation remain separate from persisted layout selection.
+ 
+@@ -120,7 +120,7 @@ A tab type can declare `multiple: true` for independent instances such as termin
+ 
+ Default pages depend on the number of registered guide entries, not the number of tab types or open tabs. Exactly one entry opens its page directly; zero or multiple entries open the guide. Explicitly adding a guide still opens the guide, even with one entry. The sole docked guide is the only tab that cannot close; closing any other sole tab also collapses the column. The close control, context menu, middle click, and `close` API apply the same rule.
+ 
+-The guide tab is a muted compass over one entry capsule per `guide` entry the registered types contributed, in `order`, centred in the body; the guide has no words of its own. A capsule shows the entry's glyph — or the guide's quieter cube placeholder when the entry registered none — and its title; while at most four entries are listed, an entry that registered a `description` shows it under the title, and a longer list drops every description. Picking a default capsule calls `tab.actions.openTab(entry.kind, { replaceTab: true })`, so the guide gives way to the page it opened. A pane holds at most one guide tab. The strip's add control is drawn only while its pane holds none and opens one there with `openTab('guide', { paneId, revealIfOpened: false })`, so a guide in another pane does not capture the click; opening the guide into a pane that already has one focuses it instead; a guide dragged, dropped, or docked into such a pane merges into it — the arriving guide closes and the pane's own is focused; `duplicateTab` on the guide records nothing. A split, an expanded empty root pane, and the pane a sole tab vacates by dropping on its own edge use the same default-page rule, one tab per new pane; the self-edge drop leaves the dragged tab focused. A plain `openTab('guide')` opens or focuses the guide only within the active or named pane. Splitting an empty pane does nothing and returns no new pane. The product allows two horizontal panes, initially equal, with divider ratios limited to 20%–80%. Insufficient width blocks a new split; with two panes already present, a body drop moves the tab between panes instead of creating a third. At the two-pane limit, split controls are disabled with a focusable reason; closing back to one pane enables them.
++The guide tab is a muted compass over one entry capsule per `guide` entry the registered types contributed, in `order`, centred in the body; the guide has no words of its own. A capsule shows the entry's glyph — or the guide's quieter cube placeholder when the entry registered none — and its title; while at most four entries are listed, an entry that registered a `description` shows it under the title, and a longer list drops every description. Picking a default capsule calls `tab.actions.openTab(entry.kind, { replaceTab: true })`, so the guide gives way to the page it opened. A pane holds at most one guide tab. The strip's add control is drawn only while its pane holds none and opens one there with `openTab('guide', { paneId, revealIfOpened: false })`, so a guide in another pane does not capture the click; opening the guide into a pane that already has one focuses it instead; a guide dragged, dropped, or docked into such a pane merges into it — the arriving guide closes and the pane's own is focused; `duplicateTab` on the guide records nothing. A split, an expanded empty root pane, and the pane a sole tab vacates by dropping on its own edge use the same default-page rule, one tab per new pane; the self-edge drop leaves the dragged tab focused. A plain `openTab('guide')` opens or focuses the guide only within the active or named pane. Splitting an empty pane does nothing and returns no new pane. The docked tree has no pane limit: each split nests along either axis, and divider ratios are limited to 20%–80%. Insufficient room along the chosen axis blocks a split; the split control stays visible with a focusable reason. Closing a pane's last tab merges it away.
+ 
+ <a id="copy"></a>
+ ## Copy
+diff --git a/packages/client/ui-sidebar-right/src/client/locales.ts b/packages/client/ui-sidebar-right/src/client/locales.ts
+index 1f4b190..ea63784 100644
+--- a/packages/client/ui-sidebar-right/src/client/locales.ts
++++ b/packages/client/ui-sidebar-right/src/client/locales.ts
+@@ -19,8 +19,10 @@ export const zh = {
+   'command.collapsed': '请先展开右侧栏',
+   'command.float': '浮动面板不支持此操作',
+   'command.empty': '请先打开页面',
+-  'command.budget': '已达两格上限',
++  'command.budget': '已达分栏上限',
+   'command.width': '栏宽不足，拖宽侧边栏后再分栏',
++  'command.splitDown': '向下分栏',
++  'command.height': '高度不足，拉高面板后再分栏',
+   'chrome.expand': '打开侧边栏',
+   'chrome.expandAria': '打开右侧边栏',
+   'chrome.collapse': '收起侧边栏',
+@@ -29,7 +31,7 @@ export const zh = {
+   'chrome.exitFullscreen': '退出全屏',
+   'dock.emptyPane': '空面板',
+   'dock.splitPane': '分栏',
+-  'dock.splitPaneDisabled': '已达两格上限',
++  'dock.splitPaneDisabled': '已达分栏上限',
+   'dock.splitPaneNarrow': '栏宽不足，拖宽侧边栏后再分栏',
+   'dock.closeTab': '关闭',
+   'dock.addTab': '新标签页',
+@@ -61,8 +63,10 @@ export const en = {
+   'command.collapsed': 'Expand the right sidebar first',
+   'command.float': 'This action is unavailable in a floating panel',
+   'command.empty': 'Open a page first',
+-  'command.budget': 'Two panes is the limit',
++  'command.budget': 'Pane limit reached',
+   'command.width': 'Not enough width to split, widen the sidebar',
++  'command.splitDown': 'Split pane down',
++  'command.height': 'Not enough height to split, resize the panel',
+   'chrome.expand': 'Open sidebar',
+   'chrome.expandAria': 'Open right sidebar',
+   'chrome.collapse': 'Collapse sidebar',
+@@ -71,7 +75,7 @@ export const en = {
+   'chrome.exitFullscreen': 'Exit fullscreen',
+   'dock.emptyPane': 'Empty pane',
+   'dock.splitPane': 'Split',
+-  'dock.splitPaneDisabled': 'Two panes is the limit',
++  'dock.splitPaneDisabled': 'Pane limit reached',
+   'dock.splitPaneNarrow': 'Not enough width to split, widen the sidebar',
+   'dock.closeTab': 'Close',
+   'dock.addTab': 'New tab',
+@@ -100,8 +104,10 @@ export const ja = {
+   'command.collapsed': '先に右サイドバーを展開してください',
+   'command.float': 'この操作はフローティングパネルでは使用できません',
+   'command.empty': '先にページを開いてください',
+-  'command.budget': 'ペインは2つまでです',
++  'command.budget': 'ペインの上限に達しました',
+   'command.width': '分割するのに十分な幅がありません。サイドバーを広げてください',
++  'command.splitDown': '下に分割',
++  'command.height': '分割するのに十分な高さがありません。パネルの高さを広げてください',
+   'chrome.expand': 'サイドバーを開く',
+   'chrome.expandAria': '右サイドバーを開く',
+   'chrome.collapse': 'サイドバーを折りたたむ',
+@@ -110,7 +116,7 @@ export const ja = {
+   'chrome.exitFullscreen': '全画面を終了',
+   'dock.emptyPane': '空のペイン',
+   'dock.splitPane': '分割',
+-  'dock.splitPaneDisabled': 'ペインは2つまでです',
++  'dock.splitPaneDisabled': 'ペインの上限に達しました',
+   'dock.splitPaneNarrow': '分割するのに十分な幅がありません。サイドバーを広げてください',
+   'dock.closeTab': '閉じる',
+   'dock.addTab': '新しいタブ',
+@@ -139,8 +145,10 @@ export const es = {
+   'command.collapsed': 'Expande primero la barra lateral derecha',
+   'command.float': 'Esta acción no está disponible en un panel flotante',
+   'command.empty': 'Abra una página primero',
+-  'command.budget': 'Dos paneles es el límite',
++  'command.budget': 'Límite de paneles alcanzado',
+   'command.width': 'No hay suficiente ancho para dividir, ampliar la barra lateral',
++  'command.splitDown': 'Dividir hacia abajo',
++  'command.height': 'No hay suficiente altura para dividir, ajusta la altura del panel',
+   'chrome.expand': 'Abrir barra lateral',
+   'chrome.expandAria': 'Abrir barra lateral derecha',
+   'chrome.collapse': 'Contraer barra lateral',
+@@ -149,7 +157,7 @@ export const es = {
+   'chrome.exitFullscreen': 'Salir de pantalla completa',
+   'dock.emptyPane': 'Panel vacío',
+   'dock.splitPane': 'dividir',
+-  'dock.splitPaneDisabled': 'Dos paneles es el límite',
++  'dock.splitPaneDisabled': 'Límite de paneles alcanzado',
+   'dock.splitPaneNarrow': 'No hay suficiente ancho para dividir, ampliar la barra lateral',
+   'dock.closeTab': 'Cerrar',
+   'dock.addTab': 'Nueva pestaña',
+@@ -178,8 +186,10 @@ export const fr = {
+   'command.collapsed': "Développez d'abord la barre latérale droite",
+   'command.float': "Cette action n'est pas disponible dans un panneau flottant",
+   'command.empty': "Ouvrir d'abord une page",
+-  'command.budget': 'Deux panneaux sont la limite',
++  'command.budget': 'Limite de volets atteinte',
+   'command.width': 'Pas assez de largeur pour diviser, élargir la barre latérale',
++  'command.splitDown': 'Diviser vers le bas',
++  'command.height': 'Pas assez de hauteur pour diviser, agrandir le panneau',
+   'chrome.expand': 'Ouvrir la barre latérale',
+   'chrome.expandAria': 'Ouvrir la barre latérale droite',
+   'chrome.collapse': 'Réduire la barre latérale',
+@@ -188,7 +198,7 @@ export const fr = {
+   'chrome.exitFullscreen': 'Quitter le plein écran',
+   'dock.emptyPane': 'Volet vide',
+   'dock.splitPane': 'Diviser',
+-  'dock.splitPaneDisabled': 'Deux panneaux sont la limite',
++  'dock.splitPaneDisabled': 'Limite de volets atteinte',
+   'dock.splitPaneNarrow': 'Pas assez de largeur pour diviser, élargir la barre latérale',
+   'dock.closeTab': 'Fermer',
+   'dock.addTab': 'Nouvel onglet',
+@@ -217,8 +227,10 @@ export const de = {
+   'command.collapsed': 'Erweitern Sie zunächst die rechte Seitenleiste',
+   'command.float': 'Diese Aktion ist in einem schwebenden Panel nicht verfügbar',
+   'command.empty': 'Öffnen Sie zunächst eine Seite',
+-  'command.budget': 'Zwei Scheiben sind die Grenze',
++  'command.budget': 'Maximale Anzahl an Scheiben erreicht',
+   'command.width': 'Die Breite reicht nicht aus, um die Seitenleiste zu teilen. Verbreitern Sie die Seitenleiste',
++  'command.splitDown': 'Nach unten teilen',
++  'command.height': 'Die Höhe reicht nicht aus, um zu teilen. Vergrößern Sie das Panel',
+   'chrome.expand': 'Seitenleiste öffnen',
+   'chrome.expandAria': 'Rechte Seitenleiste öffnen',
+   'chrome.collapse': 'Seitenleiste einklappen',
+@@ -227,7 +239,7 @@ export const de = {
+   'chrome.exitFullscreen': 'Beenden Sie den Vollbildmodus',
+   'dock.emptyPane': 'Leerer Bereich',
+   'dock.splitPane': 'Geteilt',
+-  'dock.splitPaneDisabled': 'Zwei Scheiben sind die Grenze',
++  'dock.splitPaneDisabled': 'Maximale Anzahl an Scheiben erreicht',
+   'dock.splitPaneNarrow': 'Die Breite reicht nicht aus, um die Seitenleiste zu teilen. Verbreitern Sie die Seitenleiste',
+   'dock.closeTab': 'Schließen',
+   'dock.addTab': 'Neuer Tab',
+@@ -256,8 +268,10 @@ export const ru = {
+   'command.collapsed': 'Сначала разверните правую боковую панель',
+   'command.float': 'Это действие недоступно на плавающей панели.',
+   'command.empty': 'Сначала откройте страницу',
+-  'command.budget': 'Две панели — это предел',
++  'command.budget': 'Достигнут предел панелей',
+   'command.width': 'Недостаточно ширины для разделения, расширьте боковую панель',
++  'command.splitDown': 'Разделить вниз',
++  'command.height': 'Недостаточно высоты для разделения, увеличьте панель',
+   'chrome.expand': 'Открыть боковую панель',
+   'chrome.expandAria': 'Открыть правую боковую панель',
+   'chrome.collapse': 'Свернуть боковую панель',
+@@ -266,7 +280,7 @@ export const ru = {
+   'chrome.exitFullscreen': 'Выйти из полноэкранного режима',
+   'dock.emptyPane': 'Пустая панель',
+   'dock.splitPane': 'Сплит',
+-  'dock.splitPaneDisabled': 'Две панели — это предел',
++  'dock.splitPaneDisabled': 'Достигнут предел панелей',
+   'dock.splitPaneNarrow': 'Недостаточно ширины для разделения, расширьте боковую панель',
+   'dock.closeTab': 'Закрыть',
+   'dock.addTab': 'Новая вкладка',
+@@ -295,8 +309,10 @@ export const pt = {
+   'command.collapsed': 'Expanda a barra lateral direita primeiro',
+   'command.float': 'Esta ação não está disponível em um painel flutuante',
+   'command.empty': 'Abra uma página primeiro',
+-  'command.budget': 'Dois painéis é o limite',
++  'command.budget': 'Limite de painéis atingido',
+   'command.width': 'Largura insuficiente para dividir. Amplie a barra lateral',
++  'command.splitDown': 'Dividir para baixo',
++  'command.height': 'Altura insuficiente para dividir. Aumente o painel',
+   'chrome.expand': 'Abrir barra lateral',
+   'chrome.expandAria': 'Abrir barra lateral direita',
+   'chrome.collapse': 'Recolher barra lateral',
+@@ -305,7 +321,7 @@ export const pt = {
+   'chrome.exitFullscreen': 'Sair da tela cheia',
+   'dock.emptyPane': 'Painel vazio',
+   'dock.splitPane': 'Dividir',
+-  'dock.splitPaneDisabled': 'Dois painéis é o limite',
++  'dock.splitPaneDisabled': 'Limite de painéis atingido',
+   'dock.splitPaneNarrow': 'Largura insuficiente para dividir. Amplie a barra lateral',
+   'dock.closeTab': 'Fechar',
+   'dock.addTab': 'Nova guia',
+diff --git a/packages/client/ui-sidebar-right/src/client/persistence.ts b/packages/client/ui-sidebar-right/src/client/persistence.ts
+index 7335573..ca5df31 100644
+--- a/packages/client/ui-sidebar-right/src/client/persistence.ts
++++ b/packages/client/ui-sidebar-right/src/client/persistence.ts
+@@ -38,7 +38,9 @@ function validateReferences(value: z.infer<typeof surface>): void {
+     if (visited.has(id) || entry === undefined) reject()
+     visited.add(id)
+     if (entry.kind === 'split') {
+-      if (host !== 'dock' || id !== layout.rootId || entry.axis !== 'row' || entry.children.length !== 2
++      // Any nested docked split is valid; sizes must match its children and
++      // describe the whole interval.
++      if (host !== 'dock' || entry.children.length < 2
+         || entry.children.length !== entry.sizes.length
+         || Math.abs(entry.sizes.reduce((sum, size) => sum + size, 0) - 1) > 1e-9) reject()
+       pending.push(...entry.children.map(id => ({ id, host })))
+diff --git a/packages/client/ui-sidebar-right/src/client/service.ts b/packages/client/ui-sidebar-right/src/client/service.ts
+index f3d90e7..47f9cdc 100644
+--- a/packages/client/ui-sidebar-right/src/client/service.ts
++++ b/packages/client/ui-sidebar-right/src/client/service.ts
+@@ -36,8 +36,8 @@
+ import { sidebarTargetFromElement, type SidebarRightTarget } from './focus.ts'
+ import { randomUUID } from '@deepseek-ai/dsh-util-crypto'
+ import { createSnapshotStore, type ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
+-import type { FloatRect, PaneId, TabId, TabRecord } from '@deepseek-ai/dsh-client-ui-dockkit'
+-import { activeDockPaneId, canSplit, findContentTab, findPaneContentTab, dockPaneIds, findTabPane, getPane } from '@deepseek-ai/dsh-client-ui-dockkit'
++import type { FloatRect, PaneId, SplitAxis, TabId, TabRecord } from '@deepseek-ai/dsh-client-ui-dockkit'
++import { activeDockPaneId, canSplit, findContentTab, findPaneContentTab, findTabPane, getPane } from '@deepseek-ai/dsh-client-ui-dockkit'
+ import type { BoundActions } from '@deepseek-ai/dsh-client-ui-slots'
+ import type { SessionId } from '@deepseek-ai/dsh-session/types'
+ import type { SidebarRightNavigationParams, SidebarRightResourceParams, SidebarRightTabParamsFor } from './contract/params.ts'
+@@ -64,8 +64,8 @@ interface Adoption {
+   readonly unsubscribe: () => void
+ }
+ 
+-/** The room rule's verdict for a docked pane, as a seat's docking kit last measured it: whether two working halves would fit. */
+-type RoomRule = (paneId: PaneId) => boolean
++/** The room rule's verdict for a docked pane: whether two working halves fit along one axis. */
++type RoomRule = (paneId: PaneId, axis: SplitAxis) => boolean
+ 
+ /** Plugin-owned Session state the controller reads; the plugin writes it through the factory's callbacks. */
+ interface SidebarRightSessions {
+@@ -237,14 +237,14 @@ export interface ISidebarRight {
+    */
+   focus(tabId: TabId): void
+   /**
+-   * Split a docked pane to its right and seed the new pane, under the same
+-   * pane budget and room rule as the strip's split control. Recorded when it
+-   * splits.
++   * Split a docked pane and seed the new pane, under the same pane budget and
++   * room rule as the strip's split control. Recorded when it splits.
+    * @param paneId - the pane to split; defaults to the active docked pane.
++   * @param axis - `'row'` puts the new pane to the right, `'column'` below; defaults to `'row'`.
+    * @returns the new pane's id, or `undefined` when nothing was split: the pane
+    *   is missing, floating, or empty, the budget is spent, or two halves would not fit.
+    */
+-  split(paneId?: PaneId): PaneId | undefined
++  split(paneId?: PaneId, axis?: SplitAxis): PaneId | undefined
+   /**
+    * Take a docked tab out into a floating panel. Recorded.
+    * @param tabId - the tab; one that is missing or already floating is left alone.
+@@ -426,7 +426,6 @@ export class SidebarRightController implements ISidebarRight {
+       && target.host === 'dock'
+       && target.tabs.length > 0
+       && canSplit(surface.layout)
+-      && dockPaneIds(surface.layout).length < 2
+       && this.mounted.getSnapshot() === sessionId
+       && this.canSplitPane(sessionId, target.id)
+     const commit = (): void => { actions.openContent(sessionId, {
+@@ -597,17 +596,18 @@ export class SidebarRightController implements ISidebarRight {
+   /**
+    * Explain the same geometry and pane-budget rule used by the split control.
+    * @param target - captured command or button target.
++   * @param axis - the split axis whose room rule applies; defaults to `'row'`.
+    * @returns a localizable block discriminator, or undefined when splitting is available.
+    */
+-  splitBlock(target: SidebarRightTarget): 'stale' | 'collapsed' | 'float' | 'empty' | 'budget' | 'width' | undefined {
++  splitBlock(target: SidebarRightTarget, axis: SplitAxis = 'row'): 'stale' | 'collapsed' | 'float' | 'empty' | 'budget' | 'width' | 'height' | undefined {
+     const surface = this.mountedSurface()
+     if (surface === undefined || !this.isTargetCurrent(target)) return 'stale'
+     const { layout } = surface
+     if (target.host === 'float') return 'float'
+     if (!layout.expanded) return 'collapsed'
+     if (getPane(layout, target.paneId).tabs.length === 0) return 'empty'
+-    if (!canSplit(layout) || dockPaneIds(layout).length >= 2) return 'budget'
+-    if (!this.canSplitPane(target.sessionId, target.paneId)) return 'width'
++    if (!canSplit(layout)) return 'budget'
++    if (!this.canSplitPane(target.sessionId, target.paneId, axis)) return axis === 'row' ? 'width' : 'height'
+     return undefined
+   }
+ 
+@@ -625,21 +625,22 @@ export class SidebarRightController implements ISidebarRight {
+   }
+ 
+   /**
+-   * Split a docked pane to its right when the budget and the room rule allow.
++   * Split a docked pane under the budget and room rule of `axis` and seed the new pane.
+    * @param paneId - the pane to split; defaults to the active docked pane.
++   * @param axis - `'row'` splits to the right, `'column'` below; defaults to `'row'`.
+    * @returns the new pane's id, or `undefined` when nothing was split.
+    */
+-  split(paneId?: PaneId): PaneId | undefined {
++  split(paneId?: PaneId, axis: SplitAxis = 'row'): PaneId | undefined {
+     const { sessionId, actions } = this.require()
+     const layout = this.mountedSurface()?.layout
+     if (layout === undefined) return undefined
+     const target = paneId ?? activeDockPaneId(layout)
+     const node = layout.nodes[target]
+     if (node === undefined || node.kind !== 'pane' || node.host !== 'dock') return undefined
+-    if (!canSplit(layout) || dockPaneIds(layout).length >= 2 || !this.canSplitPane(sessionId, target)) return undefined
++    if (!canSplit(layout) || !this.canSplitPane(sessionId, target, axis)) return undefined
+     let created: PaneId | undefined
+     this.host.openWithFocus(sessionId, () => {
+-      actions.splitPane(sessionId, target, (id) => { created = id })
++      actions.splitPane(sessionId, target, (id) => { created = id }, axis)
+       return created
+     })
+     return created
+@@ -706,9 +707,9 @@ export class SidebarRightController implements ISidebarRight {
+     return this.screen()?.surface
+   }
+ 
+-  /** Whether a Session's docked pane has room for two working halves, as its seat last measured; unmeasured panes do. */
+-  private canSplitPane(sessionId: SessionId, paneId: PaneId): boolean {
+-    return this.rooms.get(sessionId)?.(paneId) ?? true
++  /** Whether a Session's docked pane has room for two working halves along `axis`, as its seat last measured; unmeasured panes do. */
++  private canSplitPane(sessionId: SessionId, paneId: PaneId, axis: SplitAxis = 'row'): boolean {
++    return this.rooms.get(sessionId)?.(paneId, axis) ?? true
+   }
+ 
+   /**
+diff --git a/packages/client/ui-sidebar-right/src/client/shell/SidebarRight.tsx b/packages/client/ui-sidebar-right/src/client/shell/SidebarRight.tsx
+index 0f39af5..fd92e3f 100644
+--- a/packages/client/ui-sidebar-right/src/client/shell/SidebarRight.tsx
++++ b/packages/client/ui-sidebar-right/src/client/shell/SidebarRight.tsx
+@@ -38,8 +38,8 @@ import type {
+ } from '@deepseek-ai/dsh-client-ui-slots'
+ import type {} from '../contract/slots.ts'
+ import type { DockIntents, DockMode, FloatRect, TabId, TabRecord, TabRenderer } from '@deepseek-ai/dsh-client-ui-dockkit'
+-import { canSplit, dockPaneIds, DockLayout, findPaneContentTab } from '@deepseek-ai/dsh-client-ui-dockkit'
+-import type { HalvesFit, LayoutState, PaneId } from '@deepseek-ai/dsh-client-ui-dockkit'
++import { canSplit, DockLayout, findPaneContentTab } from '@deepseek-ai/dsh-client-ui-dockkit'
++import type { HalvesFit, LayoutState, PaneId, SplitAxis } from '@deepseek-ai/dsh-client-ui-dockkit'
+ import type { SessionId } from '@deepseek-ai/dsh-session/types'
+ import { GUIDE_KIND, pageAddress } from '../contract/seed.ts'
+ import { dockLabels } from '../labels.ts'
+@@ -83,9 +83,9 @@ export interface SidebarRightInjected {
+    *
+    * The docking kit measures its panes after it renders; the seat forwards each
+    * reading, and the service applies it when it splits this seat's Session.
+-   * @param canSplitPane - whether two working halves of a docked pane would fit; unmeasured panes fit.
++   * @param canSplitPane - whether two working halves of a docked pane would fit along one axis; unmeasured panes fit.
+    */
+-  readonly measureRoom: (canSplitPane: (paneId: PaneId) => boolean) => void
++  readonly measureRoom: (canSplitPane: (paneId: PaneId, axis: SplitAxis) => boolean) => void
+   /**
+    * Record whether the frame width this seat renders at presents an expanded panel fullscreen automatically.
+    *
+@@ -102,7 +102,7 @@ export interface SidebarRightInjected {
+   /** Close through the resource owner's cleanup handler. */
+   readonly closeTab: (tabId: TabId) => void
+   /** Split through the same controller as keyboard commands. */
+-  readonly splitPane: (paneId: PaneId) => void
++  readonly splitPane: (paneId: PaneId, axis?: SplitAxis) => void
+   /** Toggle the dock panel using its current display mode. */
+   readonly toggleFullscreen: () => void
+   readonly hooks: {
+@@ -333,8 +333,8 @@ function SidebarPanel(panel: PanelProps & { width: number; panelRef: RefObject<H
+       <div className={css.panelBody}>
+         <DockLayout
+           state={surface.layout}
+-          canSplit={canSplit(surface.layout) && dockPaneIds(surface.layout).length < 2}
+-          dropZones="horizontal"
++          canSplit={canSplit(surface.layout)}
++          dropZones="edges"
+           minPaneFraction={0.2}
+           canAddTab={paneId => guideIn(surface.layout, paneId) === undefined}
+           canCloseTab={tabId => canCloseTab(surface, tabId)}
+@@ -377,7 +377,7 @@ export function RightbarSeat({
+   const panelRef = useRef<HTMLDivElement | null>(null)
+   // A reading never re-renders anything: the service applies it when it splits.
+   const reportRoom = useCallback((fits: ReadonlyMap<PaneId, HalvesFit>): void => {
+-    measureRoom(paneId => fits.get(paneId)?.row !== false)
++    measureRoom((paneId, axis) => fits.get(paneId)?.[axis] !== false)
+   }, [measureRoom])
+   const track = shown && !autoFullscreen
+ 
+diff --git a/packages/client/ui-sidebar-right/src/client/shortcuts.ts b/packages/client/ui-sidebar-right/src/client/shortcuts.ts
+index 304498e..01a554d 100644
+--- a/packages/client/ui-sidebar-right/src/client/shortcuts.ts
++++ b/packages/client/ui-sidebar-right/src/client/shortcuts.ts
+@@ -16,9 +16,9 @@ import type {} from './locales.ts'
+  */
+ export function registerSidebarShortcuts(shortcuts: Pick<Shortcuts, 'register' | 'runtime'>, sidebar: SidebarRightController,
+   t: TranslateNS<'sidebarRight'>, closeWindow: () => void): () => void {
+-  const reason = (kind: 'split' | 'fullscreen', target: SidebarRightTarget): string | null => {
+-    if (kind === 'split') {
+-      const block = sidebar.splitBlock(target)
++  const reason = (kind: 'split' | 'splitDown' | 'fullscreen', target: SidebarRightTarget): string | null => {
++    if (kind === 'split' || kind === 'splitDown') {
++      const block = sidebar.splitBlock(target, kind === 'splitDown' ? 'column' : 'row')
+       return block === undefined ? null : t(`command.${block}`)
+     }
+     if (target.host === 'float') return t('command.float')
+@@ -40,12 +40,15 @@ export function registerSidebarShortcuts(shortcuts: Pick<Shortcuts, 'register' |
+       return { status: 'handled', run: () => { if (sidebar.isTargetCurrent(target)) sidebar.toggleExpanded() } }
+     },
+   })]
+-  for (const kind of ['split', 'fullscreen'] as const) {
++  for (const kind of ['split', 'splitDown', 'fullscreen'] as const) {
+     const binding: ShortcutBinding = kind === 'split' ? { code: 'Backslash', modifiers: ['primary'] }
+-      : { code: 'Enter', modifiers: ['primary', 'alt'] }
++      : kind === 'splitDown' ? { code: 'Backslash', modifiers: ['primary', 'shift'] }
++        : { code: 'Enter', modifiers: ['primary', 'alt'] }
++    const id = kind === 'split' ? 'pane.split' : kind === 'splitDown' ? 'pane.splitDown' : 'pane.fullscreen.toggle'
++    const label = kind === 'split' ? 'dock.splitPane' : kind === 'splitDown' ? 'command.splitDown' : 'command.fullscreen'
+     disposers.push(shortcuts.register({
+-      id: (kind === 'split' ? 'pane.split' : 'pane.fullscreen.toggle') as ShortcutCommandId,
+-      label: () => t(kind === 'split' ? 'dock.splitPane' : 'command.fullscreen'), aliases: [kind, 'panel'],
++      id: id as ShortcutCommandId,
++      label: () => t(label), aliases: kind === 'splitDown' ? ['split down', 'vertical split', 'panel'] : [kind, 'panel'],
+       defaults: { 'desktop:macos': binding, 'desktop:windows': binding, 'desktop:linux': binding,
+         'web:macos': binding, 'web:windows': binding },
+       regions: ['page', 'editable', 'terminal'], modals: [],
+@@ -56,8 +59,8 @@ export function registerSidebarShortcuts(shortcuts: Pick<Shortcuts, 'register' |
+         if (unavailable !== null) return { status: 'blocked', reason: unavailable }
+         return { status: 'handled', run: () => {
+           if (!sidebar.isTargetCurrent(target)) return
+-          if (kind === 'split') sidebar.split(target.paneId)
+-          else sidebar.toggleFullscreen(target)
++          if (kind === 'fullscreen') sidebar.toggleFullscreen(target)
++          else sidebar.split(target.paneId, kind === 'splitDown' ? 'column' : 'row')
+         } }
+       },
+     }))
+diff --git a/packages/client/ui-sidebar-right/src/client/stores.ts b/packages/client/ui-sidebar-right/src/client/stores.ts
+index 9478980..e8e55b9 100644
+--- a/packages/client/ui-sidebar-right/src/client/stores.ts
++++ b/packages/client/ui-sidebar-right/src/client/stores.ts
+@@ -29,7 +29,7 @@
+ import { defineStore, type EngineStoreHandle } from '@deepseek-ai/dsh-client-store'
+ import { clearSidebarLayout, readSidebarLayout, writeSidebarLayout } from './persistence.ts'
+ import type {
+-  DockMode, DockZone, FloatRect, History, LayoutOp, LayoutState, Mint, PaneId, SplitId, TabId, TabRecord,
++  DockMode, DockZone, FloatRect, History, LayoutOp, LayoutState, Mint, PaneId, SplitAxis, SplitId, TabId, TabRecord,
+ } from '@deepseek-ai/dsh-client-ui-dockkit'
+ import {
+   activeDockPaneId, createInitialState, dockPaneIds, EMPTY_HISTORY, findContentTab, findPaneContentTab, findTabPane, getPane,
+@@ -223,7 +223,7 @@ type SidebarRightActions = {
+   setExpanded: (draft: SidebarRightState, sessionId: string, expanded: boolean) => void
+   toggleExpanded: (draft: SidebarRightState, sessionId: string) => void
+   setMode: (draft: SidebarRightState, sessionId: string, mode: DockMode) => void
+-  splitPane: (draft: SidebarRightState, sessionId: string, paneId?: PaneId, settled?: (paneId: PaneId) => void) => void
++  splitPane: (draft: SidebarRightState, sessionId: string, paneId?: PaneId, settled?: (paneId: PaneId) => void, axis?: SplitAxis) => void
+   openContent: (
+     draft: SidebarRightState,
+     sessionId: string,
+@@ -286,12 +286,11 @@ export function createSidebarRightStore(
+       },
+       // `settled` reports the pane the split created, synchronously, because
+       // actions return nothing; it is not called when nothing was split.
+-      splitPane: (d, sessionId: string, paneId?: PaneId, settled?: (paneId: PaneId) => void) => {
++      splitPane: (d, sessionId: string, paneId?: PaneId, settled?: (paneId: PaneId) => void, axis: SplitAxis = 'row') => {
+         d.bySession = seat(d, sessionId, (s) => {
+-          const next = advance(s, (state, mint, makeTab) => dockPaneIds(state).length >= 2
+-            || getPane(state, paneId ?? activeDockPaneId(state)).tabs.length === 0
++          const next = advance(s, (state, mint, makeTab) => getPane(state, paneId ?? activeDockPaneId(state)).tabs.length === 0
+             ? []
+-            : planSplitPane(state, mint, paneId, makeTab), seed)
++            : planSplitPane(state, mint, paneId, makeTab, axis), seed)
+           if (settled !== undefined && next !== s) {
+             const before = new Set(dockPaneIds(s.layout))
+             for (const id of dockPaneIds(next.layout)) {
+@@ -387,8 +386,6 @@ export function createSidebarRightStore(
+       // pane's only tab to that pane's own edge, the default page backfills it.
+       dropTab: (d, sessionId: string, tabId: TabId, paneId: PaneId, zone: DockZone) => {
+         d.bySession = seat(d, sessionId, s => advance(s, (state, mint, makeTab) => {
+-          if (zone === 'top' || zone === 'bottom') return []
+-          if (zone !== 'center' && dockPaneIds(state).length >= 2) return []
+           const plan = (): readonly LayoutOp[] => planDropTab(state, mint, tabId, paneId, zone, makeTab)
+           return zone === 'center' ? arriving(state, tabId, paneId, plan) : plan()
+         }, seed))
+diff --git a/packages/client/ui-sidebar-right/tests/focus.client.spec.ts b/packages/client/ui-sidebar-right/tests/focus.client.spec.ts
+index b949dd5..4a9ecd5 100644
+--- a/packages/client/ui-sidebar-right/tests/focus.client.spec.ts
++++ b/packages/client/ui-sidebar-right/tests/focus.client.spec.ts
+@@ -186,7 +186,7 @@ describe('sidebar focus targets', () => {
+     h.controller.toggleFullscreen(target)
+     expect(h.layout().mode).toBe('push')
+     h.controller.split(target.paneId)
+-    expect(h.controller.splitBlock(target)).toBe('budget')
++    expect(h.controller.splitBlock(target)).toBeUndefined()
+     h.controller.openTab('files')
+     const files = h.controller.active()!.id
+     h.controller.float(files)
+@@ -478,7 +478,7 @@ describe('sidebar keyboard commands', () => {
+     releases.push(h.show())
+     const splitNow = split.resolve(context)
+     if (splitNow.status === 'handled') splitNow.run()
+-    expect(h.controller.splitBlock(h.controller.commandTarget(null)!)).toBe('budget')
++    expect(h.controller.splitBlock(h.controller.commandTarget(null)!)).toBeUndefined()
+     h.controller.openTab('files')
+     const files = h.controller.active()!.id
+     h.controller.float(files)
+@@ -487,17 +487,32 @@ describe('sidebar keyboard commands', () => {
+     expect(fullscreen.resolve({ ...context, target: floated })).toMatchObject({ status: 'blocked', reason: en['command.float'] })
+   })
+ 
++  it('splits the focused pane downward with the command binding', () => {
++    const h = harness()
++    const registry = new ShortcutRegistry('desktop', 'macos')
++    releases.push(registerSidebarShortcuts({ register: command => registry.register(command),
++      runtime: registry.runtime }, h.controller, makeTranslate(en), vi.fn()))
++    const pane = h.paneElement()
++    pane.focus()
++    const gesture = { code: 'Backslash', meta: true, control: false, alt: false, shift: true,
++      repeat: false, composing: false, defaultPrevented: false }
++    expect(registry.dispatch(gesture, { target: pane, region: 'page', modal: null }, vi.fn()).status).toBe('handled')
++    const root = h.layout().nodes[h.layout().rootId]
++    if (root?.kind !== 'split') throw new Error('expected a split')
++    expect(root.axis).toBe('column')
++  })
++
+   it.each([
+-    { platform: 'macos', keys: ['Shift+Meta+B', 'Meta+\\', 'Alt+Meta+Enter', 'Alt+Meta+W', undefined] },
+-    { platform: 'windows', keys: ['Control+Shift+B', 'Control+\\', 'Control+Alt+Enter', 'Control+Alt+W', 'Control+Alt+R'] },
+-    { platform: 'linux', keys: [undefined, undefined, undefined, undefined, undefined] },
++    { platform: 'macos', keys: ['Shift+Meta+B', 'Meta+\\', 'Shift+Meta+\\', 'Alt+Meta+Enter', 'Alt+Meta+W', undefined] },
++    { platform: 'windows', keys: ['Control+Shift+B', 'Control+\\', 'Control+Shift+\\', 'Control+Alt+Enter', 'Control+Alt+W', 'Control+Alt+R'] },
++    { platform: 'linux', keys: [undefined, undefined, undefined, undefined, undefined, undefined] },
+   ] as const)('publishes the Web defaults and unbound commands on $platform', ({ platform, keys }) => {
+     const h = harness()
+     const registry = new ShortcutRegistry('web', platform)
+     releases.push(registerSidebarShortcuts({ register: command => registry.register(command),
+       runtime: registry.runtime }, h.controller, makeTranslate(en), vi.fn()))
+     expect(registry.catalog.getSnapshot().map(row => row.id)).toEqual([
+-      'sidebar.right.toggle', 'pane.split', 'pane.fullscreen.toggle', 'page.close', 'page.refresh',
++      'sidebar.right.toggle', 'pane.split', 'pane.splitDown', 'pane.fullscreen.toggle', 'page.close', 'page.refresh',
+     ])
+     expect(registry.catalog.getSnapshot().map(row => row.aria)).toEqual(keys)
+   })
+diff --git a/packages/client/ui-sidebar-right/tests/persistence-validation.client.spec.ts b/packages/client/ui-sidebar-right/tests/persistence-validation.client.spec.ts
+index bce86c4..e073570 100644
+--- a/packages/client/ui-sidebar-right/tests/persistence-validation.client.spec.ts
++++ b/packages/client/ui-sidebar-right/tests/persistence-validation.client.spec.ts
+@@ -37,16 +37,6 @@ it.each([
+   ['split cycle', { minted: 4, layout: { ...splitLayout, nodes: { ...splitLayout.nodes, split3: { ...split, children: ['split3', 'pane1'] } } } }],
+   ['invalid split sum', { minted: 4, layout: { ...splitLayout, nodes: { ...splitLayout.nodes, split3: { ...split, sizes: [0.4, 0.4] } } } }],
+   ['mismatched split sizes', { minted: 4, layout: { ...splitLayout, nodes: { ...splitLayout.nodes, split3: { ...split, sizes: [0.2, 0.3, 0.5] } } } }],
+-  ['vertical split', { minted: 4, layout: { ...splitLayout, nodes: { ...splitLayout.nodes, split3: { ...split, axis: 'column' } } } }],
+-  ['three docked panes', { minted: 5, layout: { ...splitLayout, nodes: {
+-    ...splitLayout.nodes, pane5: { ...otherPane, id: 'pane5' },
+-    split3: { ...split, children: ['pane1', 'pane4', 'pane5'], sizes: [0.3, 0.3, 0.4] },
+-  } } }],
+-  ['nested split', { minted: 6, layout: { ...splitLayout, nodes: {
+-    ...splitLayout.nodes, pane6: { ...otherPane, id: 'pane6' },
+-    split3: { ...split, children: ['pane1', 'split5'] },
+-    split5: { ...split, id: 'split5', children: ['pane4', 'pane6'] },
+-  } } }],
+   ['split as active pane', { minted: 4, layout: { ...splitLayout, activePaneId: 'split3' } }],
+   ['floating split', { minted: 4, layout: { ...splitLayout, floats: ['split3'] } }],
+   ['float without rectangle', { minted: 3, layout: { ...empty.layout, tabs: { tab2: tab }, floats: ['float3'], nodes: { ...empty.layout.nodes, float3: { ...pane, id: 'float3', host: 'float' } } } }],
+@@ -60,6 +50,55 @@ it.each([
+   expect(new SidebarTabInventory().source.getSnapshot()).toEqual([])
+ })
+ 
++it('restores a two-pane column layout', () => {
++  const stacked = {
++    minted: 4,
++    layout: { ...splitLayout, nodes: { ...splitLayout.nodes, split3: { ...split, axis: 'column' } } },
++  }
++  localStorage.setItem(key, JSON.stringify({ bySession: { [session]: stacked } }))
++  const restored = readSidebarLayout(session)
++  expect(restored?.layout.rootId).toBe('split3')
++  const restoredSplit = restored === undefined
++    ? undefined
++    : Object.values(restored.layout.nodes).find(node => node.kind === 'split')
++  expect(restoredSplit).toMatchObject({ kind: 'split', axis: 'column' })
++  expect(localStorage.getItem(key)).not.toBeNull()
++})
++
++it('restores three panes in one row', () => {
++  const pane5 = { ...otherPane, id: 'pane5' }
++  const layout = {
++    ...splitLayout,
++    nodes: {
++      ...splitLayout.nodes, pane5,
++      split3: { ...split, children: ['pane1', 'pane4', 'pane5'], sizes: [0.3, 0.3, 0.4] },
++    },
++  }
++  localStorage.setItem(key, JSON.stringify({ bySession: { [session]: { minted: 5, layout } } }))
++  const restored = readSidebarLayout(session)
++  expect(restored?.layout.rootId).toBe('split3')
++  expect(Object.values(restored?.layout.nodes ?? {}).filter(node => node.kind === 'pane')).toHaveLength(3)
++})
++
++it('restores a nested split tree', () => {
++  const pane6 = { ...otherPane, id: 'pane6' }
++  const layout = {
++    ...splitLayout,
++    nodes: {
++      ...splitLayout.nodes, pane6,
++      split3: { ...split, children: ['pane1', 'split5'] },
++      split5: { ...split, id: 'split5', children: ['pane4', 'pane6'] },
++    },
++  }
++  localStorage.setItem(key, JSON.stringify({ bySession: { [session]: { minted: 6, layout } } }))
++  const restored = readSidebarLayout(session)
++  expect(restored?.layout.rootId).toBe('split3')
++  const nested = restored === undefined
++    ? undefined
++    : Object.values(restored.layout.nodes).find(node => node.kind === 'split' && node.id === 'split5')
++  expect(nested).toMatchObject({ kind: 'split', axis: 'row' })
++})
++
+ it('discards structurally invalid JSON envelopes and keeps an empty saved Session usable', () => {
+   for (const raw of ['null', '{"bySession":null}', '{"bySession":[]}']) {
+     localStorage.setItem(key, raw)
+diff --git a/packages/client/ui-sidebar-right/tests/persistence.client.spec.ts b/packages/client/ui-sidebar-right/tests/persistence.client.spec.ts
+index 4b6aea9..23787f1 100644
+--- a/packages/client/ui-sidebar-right/tests/persistence.client.spec.ts
++++ b/packages/client/ui-sidebar-right/tests/persistence.client.spec.ts
+@@ -55,6 +55,20 @@ it('restores current layout independently by Session with a fresh undo history',
+   expect(createSidebarRightStore(seed).create('second').getSnapshot()).toEqual(second.getSnapshot())
+ })
+ 
++it('persists and restores a stacked two-pane layout', () => {
++  storage()
++  const first = createSidebarRightStore(seed).create(sessionId)
++  first.actions.setExpanded(sessionId, true)
++  first.actions.splitPane(sessionId, undefined, undefined, 'column')
++  const layout = first.getSnapshot().bySession[sessionId]!.layout
++  const split = Object.values(layout.nodes).find(node => node.kind === 'split')!
++  expect(split.kind === 'split' ? split.axis : undefined).toBe('column')
++  const restored = createSidebarRightStore(seed).create(sessionId)
++  const restoredSplit = Object.values(restored.getSnapshot().bySession[sessionId]!.layout.nodes)
++    .find(node => node.kind === 'split')!
++  expect(restoredSplit.kind === 'split' ? restoredSplit.axis : undefined).toBe('column')
++})
++
+ it('pins restored records during adoption before the first render or store mutation', async () => {
+   storage()
+   const first = createSidebarRightStore(seed).create(sessionId)
+diff --git a/packages/client/ui-sidebar-right/tests/seat.client.spec.tsx b/packages/client/ui-sidebar-right/tests/seat.client.spec.tsx
+index 9d20ce5..75fb2e0 100644
+--- a/packages/client/ui-sidebar-right/tests/seat.client.spec.tsx
++++ b/packages/client/ui-sidebar-right/tests/seat.client.spec.tsx
+@@ -913,7 +913,7 @@ describe('slot-owned useTabInfo', () => {
+     expect(document.querySelector('[data-dockkit-tab-menu]')).toBeNull()
+   })
+ 
+-  it('keeps the current binding in the disabled split tooltip when it changes or is cleared', async () => {
++  it('keeps the current binding in the split tooltip when it changes or is cleared', async () => {
+     const h = await mountSeat()
+     const split: ShortcutCatalogEntry = {
+       id: 'pane.split' as ShortcutCommandId, label: 'Split', aliases: [],
+@@ -929,12 +929,12 @@ describe('slot-owned useTabInfo', () => {
+     const anchor = element(h.view.container, '[data-dockkit-split-button]').parentElement!
+     fireEvent.keyDown(anchor, { key: 'Tab' })
+     fireEvent.focus(anchor)
+-    expect(document.querySelector('[role="tooltip"]')?.getAttribute('aria-label')).toBe('Two panes is the limit ⌘ \\')
++    expect(document.querySelector('[role="tooltip"]')?.getAttribute('aria-label')).toBe('Split ⌘ \\')
+     act(() => { h.catalog.set([{ ...split, binding: { code: 'KeyG', modifiers: ['control'] },
+       keys: ['Ctrl', '+', 'G'], aria: 'Control+G' }]) })
+-    expect(document.querySelector('[role="tooltip"]')?.getAttribute('aria-label')).toBe('Two panes is the limit Ctrl + G')
++    expect(document.querySelector('[role="tooltip"]')?.getAttribute('aria-label')).toBe('Split Ctrl + G')
+     act(() => { h.catalog.set([{ ...split, binding: null, keys: [], aria: undefined }]) })
+-    expect(document.querySelector('[role="tooltip"]')?.textContent).toBe('Two panes is the limit')
++    expect(document.querySelector('[role="tooltip"]')?.textContent).toBe('Split')
+   })
+ 
+   it('advertises configured pane and page-close controls', async () => {
+@@ -951,32 +951,31 @@ describe('slot-owned useTabInfo', () => {
+     }
+   })
+ 
+-  it('explains the two-pane limit and adds a guide only to a pane without one', async () => {
++  it('adds a guide only to a pane without one while the tree keeps growing', async () => {
+     const h = await mountSeat()
+-    // Expanding first seeds the left pane's guide; only the right pane will lack one.
++    // Expanding first seeds the left pane's guide; later panes start with one too.
+     act(() => { h.controller.toggleExpanded() })
+     h.open()
+-    const splitButtons = () => h.view.container.querySelectorAll<HTMLButtonElement>('[data-dockkit-split-button]')
++    const splitButtons = (): HTMLButtonElement[] => [...h.view.container.querySelectorAll<HTMLButtonElement>('[data-dockkit-split-button]')]
+     expect(splitButtons()).toHaveLength(1)
+     act(() => { h.controller.split() })
+     expect(dockPaneIds(h.layout())).toHaveLength(2)
+-    const stored = h.instance.getSnapshot()
+-    act(() => { expect(h.controller.split()).toBeUndefined() })
+-    expect(h.instance.getSnapshot()).toBe(stored)
+-    expect(splitButtons()).toHaveLength(2)
+-    expect([...splitButtons()].every(button => button.hasAttribute('disabled'))).toBe(true)
+-    const right = dockPaneIds(h.layout())[1]!
++    act(() => { expect(h.controller.split()).toBeDefined() })
++    expect(dockPaneIds(h.layout())).toHaveLength(3)
++    expect(splitButtons()).toHaveLength(3)
++    expect(splitButtons().every(button => button.disabled)).toBe(false)
++    const right = dockPaneIds(h.layout())[2]!
+     h.open('right.txt', { paneId: right })
+     const guide = getPane(h.layout(), right).tabs.find(id => h.layout().tabs[id]?.kind === 'guide')!
+     act(() => { h.actions.closeTab(SESSION, guide) })
+-    const add = element(h.view.container, '[data-dockkit-add-tab]')
++    const add = element(h.view.container, `[data-dockkit-pane="${right}"] [data-dockkit-add-tab]`)
+     expect(add.closest('[data-dockkit-pane]')?.getAttribute('data-dockkit-pane')).toBe(right)
+     fireEvent.click(add)
+     expect(getPane(h.layout(), right).tabs.filter(id => h.layout().tabs[id]?.kind === 'guide')).toHaveLength(1)
+     const closing = [...getPane(h.layout(), right).tabs]
+     act(() => { for (const tabId of closing) h.actions.closeTab(SESSION, tabId) })
+-    expect(dockPaneIds(h.layout())).toHaveLength(1)
+-    expect(splitButtons()).toHaveLength(1)
++    expect(dockPaneIds(h.layout())).toHaveLength(2)
++    expect(splitButtons()).toHaveLength(2)
+     expect(splitButtons()[0]?.disabled).toBe(false)
+   })
+ })
+diff --git a/packages/client/ui-sidebar-right/tests/service.client.spec.ts b/packages/client/ui-sidebar-right/tests/service.client.spec.ts
+index 9dd8979..ae4f152 100644
+--- a/packages/client/ui-sidebar-right/tests/service.client.spec.ts
++++ b/packages/client/ui-sidebar-right/tests/service.client.spec.ts
+@@ -191,7 +191,7 @@ describe('SidebarRightController — opening', () => {
+     expect(findTabPane(layout(), tabOf('a.txt')).id).toBe(left)
+   })
+ 
+-  it('opens new content alone in a preferred pane and falls back to the current pane at the limit', () => {
++  it('opens new content in a new pane each time preferNewPane asks', () => {
+     const { controller, publish, layout, tabOf, entries, expand } = harness()
+     expand()
+     publish()
+@@ -205,8 +205,8 @@ describe('SidebarRightController — opening', () => {
+ 
+     publish()
+     controller.openResource('dsh-resource://file/session/s-test/b.txt', { preferNewPane: true })
+-    expect(dockPaneIds(layout())).toHaveLength(2)
+-    expect(findTabPane(layout(), tabOf('b.txt')).id).toBe(pane.id)
++    expect(dockPaneIds(layout())).toHaveLength(3)
++    expect(findTabPane(layout(), tabOf('b.txt')).id).not.toBe(pane.id)
+   })
+ 
+   it('falls back when the pane is too narrow and reveals existing content without splitting', () => {
+@@ -445,7 +445,7 @@ describe('SidebarRightController — layout operations', () => {
+     expect(controller.split()).toBeUndefined()
+   })
+ 
+-  it('splits the active docked pane and names the new one, or nothing when the budget or the room rule says no', () => {
++  it('splits the active docked pane and names the new one, or nothing when the room rule says no', () => {
+     const { controller, instance, publish, layout, entries, room, expand } = harness()
+     instance.actions.open(SESSION)
+     expand()
+@@ -468,12 +468,35 @@ describe('SidebarRightController — layout operations', () => {
+     publish()
+     const [float] = layout().floats
+     expect(controller.split(float)).toBeUndefined()
+-    // The budget: split to two panes, then no more.
+-    while (dockPaneIds(layout()).length < 2) {
+-      expect(controller.split(dockPaneIds(layout()).at(-1))).toBeDefined()
+-      publish()
+-    }
+-    expect(controller.split()).toBeUndefined()
++    // The tree keeps growing: another split is allowed.
++    const count = dockPaneIds(layout()).length
++    expect(controller.split()).toBeDefined()
++    expect(dockPaneIds(layout())).toHaveLength(count + 1)
++  })
++
++  it('splits the active docked pane downward when asked for a column axis', () => {
++    const { controller, instance, publish, layout, expand } = harness()
++    instance.actions.open(SESSION)
++    expand()
++    publish()
++    const created = controller.split(undefined, 'column')
++    expect(created).toBeDefined()
++    expect(dockPaneIds(layout())).toHaveLength(2)
++    const root = layout().nodes[layout().rootId]
++    if (root?.kind !== 'split') throw new Error('expected a split root')
++    expect(root.axis).toBe('column')
++  })
++
++  it('reports a height block for a column split when only the row halves fit', () => {
++    const { controller, instance, publish, measure, expand } = harness()
++    instance.actions.open(SESSION)
++    expand()
++    publish()
++    measure(SESSION, (_paneId, axis) => axis === 'row')
++    const target = controller.commandTarget(null)!
++    expect(controller.splitBlock(target, 'column')).toBe('height')
++    expect(controller.split(undefined, 'column')).toBeUndefined()
++    expect(controller.split(undefined, 'row')).toBeDefined()
+   })
+ 
+   it('floats a docked tab, and leaves a floating or missing tab alone', () => {
+diff --git a/packages/client/ui-sidebar-right/tests/stores.client.spec.ts b/packages/client/ui-sidebar-right/tests/stores.client.spec.ts
+index 961e657..1deffd2 100644
+--- a/packages/client/ui-sidebar-right/tests/stores.client.spec.ts
++++ b/packages/client/ui-sidebar-right/tests/stores.client.spec.ts
+@@ -141,7 +141,7 @@ describe('createSidebarRightStore — the sequence', () => {
+     expect(dockPaneIds(layout())).toEqual([secondPane])
+   })
+ 
+-  it('allows two docked panes and rejects further splits without recording', () => {
++  it('keeps splitting without a pane budget', () => {
+     const { actions, layout, entries, expand } = harness()
+     expand()
+     actions.splitPane(SESSION)
+@@ -149,19 +149,44 @@ describe('createSidebarRightStore — the sequence', () => {
+     const before = entries()
+     const settled = vi.fn()
+     actions.splitPane(SESSION, undefined, settled)
+-    expect(dockPaneIds(layout())).toHaveLength(2)
+-    expect(entries()).toBe(before)
+-    expect(settled).not.toHaveBeenCalled()
++    expect(dockPaneIds(layout())).toHaveLength(3)
++    expect(entries()).toBe(before + 1)
++    expect(settled).toHaveBeenCalledOnce()
+   })
+ 
+-  it('rejects vertical drops and keeps split ratios within twenty to eighty percent', () => {
++  it.each(['top', 'bottom'] as const)('splits one pane at its %s edge into a stacked pair', (zone) => {
++    const { actions, layout, entries, guide, expand } = harness()
++    expand()
++    actions.openContent(SESSION, {
++      kind: 'text', contentId: 'dsh-resource://file/session/s-test/a.txt', title: 'a',
++    }, () => {})
++    const text = Object.values(layout().tabs).find(tab => tab.kind === 'text')
++    if (text === undefined) throw new Error('expected the text tab')
++    const before = layout()
++    const home = getPane(before, before.rootId).id
++    const recorded = entries()
++
++    actions.dropTab(SESSION, text.id, home, zone)
++
++    const split = getSplit(layout(), layout().rootId)
++    const destination = findTabPane(layout(), text.id)
++    expect(split.axis).toBe('column')
++    expect(split.children).toEqual(zone === 'top' ? [destination.id, home] : [home, destination.id])
++    expect(split.sizes).toEqual([0.5, 0.5])
++    expect(getPane(layout(), home).tabs).toEqual([guide()])
++    expect(entries()).toBe(recorded + 1)
++    const dropped = layout()
++
++    actions.undo(SESSION)
++    expect(layout()).toEqual(before)
++    actions.redo(SESSION)
++    expect(layout()).toEqual(dropped)
++  })
++
++  it('keeps split ratios within twenty to eighty percent and allows another split', () => {
+     const { actions, layout, entries, guide, expand } = harness()
+     expand()
+     actions.openContent(SESSION, { kind: 'text', contentId: 'file:a', title: 'a' }, () => {})
+-    const before = entries()
+-    actions.dropTab(SESSION, guide(), layout().activePaneId, 'top')
+-    actions.dropTab(SESSION, guide(), layout().activePaneId, 'bottom')
+-    expect(entries()).toBe(before)
+     actions.splitPane(SESSION)
+     const split = getSplit(layout(), layout().rootId).id
+     actions.resizeSplit(SESSION, split, [0.01, 0.99])
+@@ -170,7 +195,8 @@ describe('createSidebarRightStore — the sequence', () => {
+     expect(getSplit(layout(), split).sizes).toEqual([0.8, 0.2])
+     const splitCount = entries()
+     actions.dropTab(SESSION, guide(), layout().activePaneId, 'right')
+-    expect(entries()).toBe(splitCount)
++    expect(entries()).toBe(splitCount + 1)
++    expect(dockPaneIds(layout())).toHaveLength(3)
+   })
+ 
+   it('materializes a session empty on open without recording, then seeds the guide with the first expansion', () => {

@@ -1,0 +1,31 @@
+{
+  "name": "dsh-plugin-infinite-split-tabs",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Infinite split tabs for the DeepSeek Harness right sidebar: split down, nest both ways, persist layouts.",
+  "license": "MIT",
+  "author": "Jeremy Tenjo",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jeremytenjo/dsh-plugin-infinite-split-tabs.git"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "split",
+    "sidebar",
+    "panes"
+  ],
+  "scripts": {
+    "apply": "bash scripts/apply.sh"
+  },
+  "files": [
+    "patches",
+    "docs",
+    "scripts",
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md"
+  ]
+}
