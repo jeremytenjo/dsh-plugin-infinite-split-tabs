@@ -9,6 +9,16 @@ nest panes in both directions, drag tabs to any edge, and keep every layout acro
 > ships the working patch plus the test/build evidence. See [ROADMAP.md](ROADMAP.md) for the
 > plugin conversion.
 
+## Review
+
+The source diff is recorded as a draft PR in the contributor's fork:
+
+**[jeremytenjo/deepseek-harness#1 — feat(sidebar): split down and unbounded nested panes](https://github.com/jeremytenjo/deepseek-harness/pull/1)**
+
+`deepseek-ai/deepseek-harness` currently disables external pull requests, so the PR cannot be
+opened against the upstream repository. The fork PR is the reviewable record of the same
+24-file change shipped in this repository's `patches/` directory.
+
 ![2×2 nested panes](docs/2x2-splits.png)
 
 ## Features

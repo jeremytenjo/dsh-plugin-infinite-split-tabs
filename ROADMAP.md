@@ -19,3 +19,11 @@ To make this installable with `dsh plugin add`, the plugin needs to either:
    pull requests, so this would start as a GitHub Discussion proposal.
 
 Until then, the source patch is the supported distribution.
+
+## Reference review PR
+
+- [jeremytenjo/deepseek-harness#1 — feat(sidebar): split down and unbounded nested panes](https://github.com/jeremytenjo/deepseek-harness/pull/1)
+
+This is a draft PR in the contributor's fork, not against upstream: `deepseek-ai/deepseek-harness`
+disables external pull requests (`CONTRIBUTING.md`, `has_pull_requests: false`). It records the
+same 24-file source diff that is packaged in `patches/0001-right-sidebar-infinite-splits.patch`.
